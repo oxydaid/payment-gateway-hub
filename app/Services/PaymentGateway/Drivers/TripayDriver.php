@@ -122,7 +122,13 @@ class TripayDriver implements GatewayDriverInterface
         $localSignature = hash_hmac('sha256', $rawBody, $this->privateKey);
 
         if (empty($callbackSignature) || ! hash_equals($localSignature, $callbackSignature)) {
-            throw new \Exception('Tripay signature verification failed.');
+            // Fallback: Verify using minified JSON to support manual testing / formatted JSON bodies
+            $minifiedBody = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $minifiedSignature = hash_hmac('sha256', $minifiedBody, $this->privateKey);
+
+            if (! hash_equals($minifiedSignature, $callbackSignature)) {
+                throw new \Exception('Tripay signature verification failed.');
+            }
         }
 
         $status = $this->mapStatus($payload['status'] ?? '');
