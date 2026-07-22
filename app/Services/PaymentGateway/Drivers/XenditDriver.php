@@ -50,8 +50,8 @@ class XenditDriver implements GatewayDriverInterface
                 'external_id' => $transaction->reference_id,
                 'amount' => (int) $transaction->total_amount,
                 'description' => 'Payment for Order #'.$transaction->order_id,
-                'success_redirect_url' => route('home'),
-                'failure_redirect_url' => route('home'),
+                'success_redirect_url' => url('/'),
+                'failure_redirect_url' => url('/'),
             ]);
 
         if ($response->failed()) {

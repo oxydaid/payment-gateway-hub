@@ -55,7 +55,7 @@ class TokopayDriver implements GatewayDriverInterface
             'customer_name' => $transaction->merchant->name,
             'customer_email' => 'merchant_'.$transaction->merchant_id.'@example.com',
             'customer_phone' => '081234567890',
-            'redirect_url' => route('home'), // Fallback URL
+            'redirect_url' => url('/'), // Fallback URL
             'expired_ts' => 0,
             'signature' => $signature,
         ];
