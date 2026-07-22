@@ -105,6 +105,10 @@ class TokopayDriver implements GatewayDriverInterface
 
         // Generate possible signature formulas to guarantee validation
         $signatures = [
+            md5($merchantId.':'.$this->secretKey.':'.$refId), // Official formula: merchant_id:secret:ref_id
+            md5($merchantId.$this->secretKey.$refId),          // Official formula without colons
+            md5($merchantId.':'.$this->secretKey.':'.$reference), // Official formula using pg_ref_id
+            md5($merchantId.$this->secretKey.$reference),          // Official formula using pg_ref_id without colons
             md5($merchantId.$this->secretKey.$refId.$status),
             md5($merchantId.':'.$this->secretKey.':'.$refId.':'.$status),
             md5($merchantId.':'.$this->secretKey.':'.$refId.':'.$totalDibayar),
