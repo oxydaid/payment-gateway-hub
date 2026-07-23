@@ -138,8 +138,10 @@ class WebhookController extends Controller
             $lockKey = 'webhook_lock_'.$transaction->reference_id;
             $lock = Cache::lock($lockKey, 10);
 
-            $status = $lock->block(5, function () use ($transaction, $payload, $request) {
-                return DB::transaction(function () use ($transaction, $payload, $request) {
+            $shouldDispatchCallback = false;
+
+            $status = $lock->block(5, function () use ($transaction, $payload, $request, &$shouldDispatchCallback) {
+                return DB::transaction(function () use ($transaction, $payload, $request, &$shouldDispatchCallback) {
                     $transaction->refresh();
 
                     $gateway = $transaction->paymentMethod->gateway;
@@ -159,8 +161,6 @@ class WebhookController extends Controller
 
                     // If status changes from PENDING, or pg_status changes, update and queue merchant callback
                     if ($transaction->status !== $statusResponse->status || $transaction->pg_status !== $newPgStatus) {
-                        $oldStatus = $transaction->status;
-
                         $transaction->update([
                             'status' => $statusResponse->status,
                             'paid_at' => $statusResponse->paidAt,
@@ -171,7 +171,7 @@ class WebhookController extends Controller
                             ]),
                         ]);
 
-                        SendMerchantCallbackJob::dispatchMerchantCallback($transaction);
+                        $shouldDispatchCallback = true;
                     }
 
                     return true;
@@ -180,6 +180,18 @@ class WebhookController extends Controller
 
             if (! $status) {
                 throw new \Exception('Failed to acquire transaction lock.');
+            }
+
+            // Dispatch callback to merchant outside database transaction
+            if ($shouldDispatchCallback) {
+                try {
+                    SendMerchantCallbackJob::dispatchMerchantCallback($transaction);
+                } catch (Throwable $callbackEx) {
+                    Log::warning('Merchant callback dispatch failed during webhook processing.', [
+                        'transaction_id' => $transaction->id,
+                        'error' => $callbackEx->getMessage(),
+                    ]);
+                }
             }
 
             // Standardize return responses for each gateway if needed
