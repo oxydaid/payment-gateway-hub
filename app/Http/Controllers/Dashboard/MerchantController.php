@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Dashboard;
 use App\Http\Controllers\Controller;
 use App\Models\ApiKey;
 use App\Models\Merchant;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -92,5 +94,78 @@ class MerchantController extends Controller
         ]);
 
         return Inertia::flash('success', "New API Key generated for merchant '{$merchant->name}'.")->back();
+    }
+
+    public function testWebhook(Request $request, Merchant $merchant): JsonResponse
+    {
+        if (empty($merchant->webhook_url)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Webhook URL is not configured.',
+            ], 400);
+        }
+
+        // Prepare dummy payload
+        $payload = [
+            'reference_id' => (string) Str::uuid(),
+            'merchant_ref_id' => 'TEST-'.rand(1000, 9999),
+            'payment_gateway' => 'midtrans',
+            'payment_method' => 'qris',
+            'amount' => 10000.00,
+            'fee' => 0.00,
+            'total_amount' => 10000.00,
+            'status' => 'PAID',
+            'pg_status' => 'settlement',
+            'pg_ref_id' => 'TRX-TEST-'.strtoupper(Str::random(10)),
+            'checkout_url' => url('/'),
+            'qris_url' => null,
+            'created_at' => now()->toIso8601String(),
+            'paid_at' => now()->toIso8601String(),
+        ];
+
+        // Sign payload with merchant api key
+        $signature = hash_hmac('sha256', json_encode($payload), $merchant->api_key ?? '');
+
+        try {
+            $startTime = microtime(true);
+            $response = Http::withHeaders([
+                'X-Bridge-Signature' => $signature,
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ])
+                ->timeout(10)
+                ->connectTimeout(3)
+                ->post($merchant->webhook_url, $payload);
+
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+
+            $isSuccessResponse = false;
+            if ($response->successful()) {
+                $responseData = $response->json();
+                if (isset($responseData['success']) && ($responseData['success'] === true || $responseData['success'] === 'true')) {
+                    $isSuccessResponse = true;
+                }
+            }
+
+            return response()->json([
+                'success' => $isSuccessResponse,
+                'status_code' => $response->status(),
+                'response_body' => $response->body(),
+                'duration_ms' => $duration,
+                'notes' => $isSuccessResponse
+                    ? 'Webhook delivered successfully and accepted by merchant.'
+                    : ($response->successful()
+                        ? 'Connected, but merchant did not return {"success": true}.'
+                        : 'Webhook endpoint returned error status code.'),
+            ]);
+
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'status_code' => 500,
+                'response_body' => null,
+                'notes' => 'Connection failed: '.$e->getMessage(),
+            ]);
+        }
     }
 }

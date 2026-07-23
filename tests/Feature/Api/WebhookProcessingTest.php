@@ -354,3 +354,81 @@ test('it processes xendit webhook successfully', function (): void {
 
     Queue::assertPushed(SendMerchantCallbackJob::class);
 });
+
+test('it processes xendit v3 payment request webhook successfully', function (): void {
+    Queue::fake();
+
+    $merchant = Merchant::create([
+        'name' => 'Test Merchant',
+        'api_key' => 'test-key',
+        'is_active' => true,
+        'webhook_url' => 'https://merchant.com/webhook',
+    ]);
+
+    $gateway = PaymentGateway::create([
+        'name' => 'Xendit',
+        'code' => 'xendit',
+        'credentials' => [
+            'secret_key' => 'xendit-secret-key',
+            'callback_token' => 'xendit-callback-token',
+        ],
+        'is_active' => true,
+    ]);
+
+    $method = PaymentMethod::create([
+        'payment_gateway_id' => $gateway->id,
+        'name' => 'Xendit Mandiri VA',
+        'code' => 'mandiri_va',
+        'type' => 'va',
+        'fee_type' => 'fix',
+        'fee_fix' => 4500,
+        'fee_percent' => 0,
+        'is_active' => true,
+    ]);
+
+    $transaction = Transaction::create([
+        'reference_id' => 'tx-xendit-v3-123',
+        'merchant_id' => $merchant->id,
+        'merchant_ref_id' => 'INV-1005',
+        'payment_method_id' => $method->id,
+        'amount' => 100000,
+        'fee' => 4500,
+        'total_amount' => 104500,
+        'status' => 'PENDING',
+        'expired_at' => now()->addHours(24),
+    ]);
+
+    $payload = [
+        'event' => 'payment.capture',
+        'business_id' => '6094fa76c2fd53701b8e079c',
+        'created' => now()->toIso8601String(),
+        'data' => [
+            'payment_id' => 'py-1fdaf346-dd2e-4b6c-b938-124c7167a822',
+            'business_id' => '6094fa76c2fd53701b8e079c',
+            'status' => 'SUCCEEDED',
+            'payment_request_id' => 'pr-xendit-req-123',
+            'request_amount' => 104500,
+            'channel_code' => 'MANDIRI',
+            'country' => 'ID',
+            'currency' => 'IDR',
+            'reference_id' => 'tx-xendit-v3-123',
+            'type' => 'SINGLE_PAYMENT',
+            'created' => now()->toIso8601String(),
+            'updated' => now()->toIso8601String(),
+        ],
+    ];
+
+    $response = $this->withHeaders([
+        'X-Callback-Token' => 'xendit-callback-token',
+    ])->postJson(route('webhooks.xendit'), $payload);
+
+    $response->assertOk();
+    $response->assertJsonPath('success', true);
+
+    $transaction->refresh();
+    expect($transaction->status)->toBe('PAID');
+    expect($transaction->paid_at)->not->toBeNull();
+    expect($transaction->pg_ref_id)->toBe('pr-xendit-req-123');
+
+    Queue::assertPushed(SendMerchantCallbackJob::class);
+});

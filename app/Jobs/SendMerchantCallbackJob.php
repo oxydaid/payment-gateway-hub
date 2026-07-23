@@ -19,6 +19,18 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
+     * Dispatch the job either synchronously or asynchronously depending on configuration.
+     */
+    public static function dispatchMerchantCallback(Transaction $transaction): void
+    {
+        if (config('queue.merchant_callback_sync', true)) {
+            self::dispatchSync($transaction);
+        } else {
+            self::dispatch($transaction);
+        }
+    }
+
+    /**
      * The number of times the job may be attempted.
      *
      * @var int
@@ -72,6 +84,9 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
             'total_amount' => (float) $this->transaction->total_amount,
             'status' => $this->transaction->status,
             'pg_status' => $this->transaction->pg_status,
+            'pg_ref_id' => $this->transaction->pg_ref_id,
+            'checkout_url' => $this->transaction->checkout_url,
+            'qris_url' => $this->transaction->qris_url,
             'created_at' => $this->transaction->created_at->toIso8601String(),
             'paid_at' => $this->transaction->paid_at?->toIso8601String(),
         ];
@@ -123,6 +138,15 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
                 'transaction_id' => $this->transaction->id,
                 'url' => $merchant->webhook_url,
                 'error' => $e->getMessage(),
+            ]);
+
+            // Save connection/timeout failures in WebhookLog
+            WebhookLog::create([
+                'transaction_id' => $this->transaction->id,
+                'direction' => 'outgoing',
+                'payload' => $payload,
+                'status_code' => 500, // standard status code for connection failures
+                'notes' => 'Connection failed: '.$e->getMessage(),
             ]);
 
             // Re-throw to trigger job retry

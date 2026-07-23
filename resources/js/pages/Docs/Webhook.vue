@@ -17,6 +17,9 @@ const examplePayload = JSON.stringify({
   "total_amount": 10140.00,
   "status": "PAID",
   "pg_status": "settlement",
+  "pg_ref_id": "TRX18472948291",
+  "checkout_url": "https://api.sandbox.midtrans.com/v2/qris/8a987e4e/image",
+  "qris_url": null,
   "created_at": "2026-07-22T16:40:11+07:00",
   "paid_at": "2026-07-22T16:40:30+07:00"
 }, null, 2);

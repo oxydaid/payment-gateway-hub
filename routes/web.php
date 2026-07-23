@@ -30,6 +30,7 @@ Route::middleware('auth')->group(function () {
     Route::put('/merchants/{merchant}', [MerchantController::class, 'update'])->name('merchants.update');
     Route::delete('/merchants/{merchant}', [MerchantController::class, 'destroy'])->name('merchants.destroy');
     Route::post('/merchants/{merchant}/generate-key', [MerchantController::class, 'generateKey'])->name('merchants.generate-key');
+    Route::post('/merchants/{merchant}/test-webhook', [MerchantController::class, 'testWebhook'])->name('merchants.test-webhook');
 
     // API Keys CRUD
     Route::get('/api-keys', [ApiKeyController::class, 'index'])->name('api-keys.index');

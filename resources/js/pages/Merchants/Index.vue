@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { Head, useForm, router, Link } from '@inertiajs/vue3';
+import { Head, useForm, router, Link, useHttp } from '@inertiajs/vue3';
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import { 
     Plus, 
@@ -14,7 +14,8 @@ import {
     SlidersHorizontal,
     ExternalLink,
     Loader2,
-    ShieldAlert
+    ShieldAlert,
+    Activity
 } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -57,6 +58,21 @@ const isCreateOpen = ref(false);
 const isEditOpen = ref(false);
 const editingMerchant = ref<MerchantItem | null>(null);
 const copiedKeyId = ref<number | null>(null);
+
+// Webhook testing states
+const isTestOpen = ref(false);
+const testingMerchant = ref<MerchantItem | null>(null);
+const testResult = ref<{
+    success: boolean;
+    status_code?: number;
+    response_body?: string | null;
+    duration_ms?: number;
+    notes?: string;
+    message?: string;
+} | null>(null);
+const isTestingInProgress = ref(false);
+
+const http = useHttp();
 
 const form = useForm({
     name: '',
@@ -119,6 +135,32 @@ function copyToClipboard(text: string, id: number) {
     setTimeout(() => {
         copiedKeyId.value = null;
     }, 2000);
+}
+
+function openTest(merchant: MerchantItem) {
+    testingMerchant.value = merchant;
+    testResult.value = null;
+    isTestOpen.value = true;
+}
+
+function runWebhookTest() {
+    if (!testingMerchant.value) return;
+    isTestingInProgress.value = true;
+    testResult.value = null;
+
+    http.post(`/merchants/${testingMerchant.value.id}/test-webhook`, {
+        onSuccess: (response: any) => {
+            isTestingInProgress.value = false;
+            testResult.value = response;
+        },
+        onError: () => {
+            isTestingInProgress.value = false;
+            testResult.value = {
+                success: false,
+                notes: 'An unexpected error occurred while making the request.',
+            };
+        }
+    });
 }
 </script>
 
@@ -199,6 +241,13 @@ function copyToClipboard(text: string, id: number) {
                                 </td>
                                 <td class="px-6 py-4 text-right">
                                     <div class="flex items-center justify-end gap-1.5">
+                                        <button
+                                            @click="openTest(m)"
+                                            class="p-1.5 rounded-md bg-muted text-blue-500 hover:bg-blue-500 hover:text-black transition-colors cursor-pointer border border-border"
+                                            title="Test Webhook Connection"
+                                        >
+                                            <Activity class="h-4 w-4" />
+                                        </button>
                                         <button
                                             @click="generateKey(m)"
                                             class="p-1.5 rounded-md bg-muted text-yellow-500 hover:bg-yellow-500 hover:text-black transition-colors cursor-pointer border border-border"
@@ -364,6 +413,88 @@ function copyToClipboard(text: string, id: number) {
                         </Button>
                     </DialogFooter>
                 </form>
+            </DialogContent>
+        </Dialog>
+
+        <!-- Test Webhook Modal -->
+        <Dialog :open="isTestOpen" @update:open="isTestOpen = $event">
+            <DialogContent class="bg-card border-border text-foreground w-full max-w-lg">
+                <DialogHeader>
+                    <DialogTitle class="text-lg text-foreground flex items-center gap-2 font-bold">
+                        <Activity class="h-5 w-5 text-blue-500 animate-pulse" />
+                        Test Webhook: {{ testingMerchant?.name }}
+                    </DialogTitle>
+                    <DialogDescription class="text-xs text-muted-foreground">
+                        Send a secure mock transaction callback payload to verify your endpoint response and signature calculation.
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div class="space-y-4 py-3">
+                    <div class="bg-muted p-3.5 rounded-lg space-y-1.5 border border-border">
+                        <div class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Webhook Target URL</div>
+                        <div class="font-mono text-xs text-foreground break-all flex items-center gap-1.5">
+                            <span class="bg-blue-500/20 text-blue-500 border border-blue-500/20 px-1.5 py-0.5 rounded font-bold uppercase text-[10px]">POST</span>
+                            <span v-if="testingMerchant?.webhook_url" class="text-foreground/90 font-medium">{{ testingMerchant.webhook_url }}</span>
+                            <span v-else class="text-destructive font-medium italic">No Webhook URL Configured</span>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-muted-foreground">Signs payload with merchant's active API Key.</span>
+                        <Button 
+                            type="button"
+                            @click="runWebhookTest" 
+                            :disabled="isTestingInProgress || !testingMerchant?.webhook_url"
+                            class="bg-blue-600 text-white hover:bg-blue-500 font-bold px-4 h-9 flex items-center gap-2"
+                        >
+                            <Loader2 v-if="isTestingInProgress" class="h-4 w-4 animate-spin" />
+                            <span v-else>Send Test Payload</span>
+                        </Button>
+                    </div>
+
+                    <!-- Result Section -->
+                    <div v-if="isTestingInProgress" class="py-12 flex flex-col items-center justify-center gap-3">
+                        <Loader2 class="h-8 w-8 animate-spin text-blue-500" />
+                        <span class="text-xs text-muted-foreground animate-pulse font-medium">Sending mock payload and waiting for response...</span>
+                    </div>
+
+                    <div v-else-if="testResult" class="space-y-4 border-t border-border pt-4">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-muted/55 p-3 rounded-lg border border-border/80">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-0.5">Connection Status</span>
+                                <span :class="['text-xs font-bold uppercase', testResult.status_code ? 'text-emerald-500' : 'text-destructive']">
+                                    {{ testResult.status_code ? 'Connected' : 'Connection Failed' }}
+                                </span>
+                            </div>
+
+                            <div class="bg-muted/55 p-3 rounded-lg border border-border/80">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-0.5">HTTP Status Code</span>
+                                <span :class="['text-xs font-mono font-bold', testResult.success ? 'text-emerald-500' : 'text-destructive']">
+                                    {{ testResult.status_code ?? '0' }}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="bg-muted/55 p-3.5 rounded-lg border border-border/80 space-y-1">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Verification Result / Notes</span>
+                            <span :class="['text-xs font-medium leading-relaxed block', testResult.success ? 'text-emerald-400' : 'text-yellow-500']">
+                                {{ testResult.notes ?? testResult.message }}
+                            </span>
+                        </div>
+
+                        <div v-if="testResult.response_body !== undefined" class="space-y-1.5">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Response Body</span>
+                            <pre class="bg-muted p-3.5 rounded-lg border border-border text-[11px] font-mono overflow-x-auto max-h-[150px] text-foreground/90 font-medium">{{ testResult.response_body || '(Empty Response)' }}</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <DialogFooter class="border-t border-border pt-4">
+                    <Button type="button" variant="secondary" @click="isTestOpen = false" class="bg-muted text-foreground border-none">
+                        Close
+                    </Button>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     </AdminLayout>

@@ -126,4 +126,16 @@ return [
         'table' => 'failed_jobs',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Merchant Callback Sync Mode
+    |--------------------------------------------------------------------------
+    |
+    | Define whether merchant callbacks should be sent synchronously (sync)
+    | or asynchronously via the queue. True is recommended for shared hosting
+    | and local testing, while false is recommended for production VPS.
+    |
+    */
+    'merchant_callback_sync' => env('MERCHANT_CALLBACK_SYNC', true),
+
 ];

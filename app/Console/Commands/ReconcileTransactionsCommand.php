@@ -83,7 +83,7 @@ class ReconcileTransactionsCommand extends Command
 
                             if ($isStatusChanged) {
                                 $this->info("Transaction {$transaction->reference_id} status updated from {$oldStatus} to {$statusResponse->status}.");
-                                SendMerchantCallbackJob::dispatch($transaction);
+                                SendMerchantCallbackJob::dispatchMerchantCallback($transaction);
                             }
                         }
 
@@ -92,7 +92,7 @@ class ReconcileTransactionsCommand extends Command
                         if ($transaction->status === 'PENDING' && $transaction->expired_at->isPast()) {
                             $transaction->update(['status' => 'EXPIRED']);
                             $this->info("Transaction {$transaction->reference_id} marked as EXPIRED (local expiration reached).");
-                            SendMerchantCallbackJob::dispatch($transaction);
+                            SendMerchantCallbackJob::dispatchMerchantCallback($transaction);
                         }
                     });
                 });
