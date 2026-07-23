@@ -10,6 +10,7 @@ Route::prefix('v1')->group(function (): void {
     Route::post('/webhooks/tripay', [WebhookController::class, 'tripay'])->name('webhooks.tripay');
     Route::post('/webhooks/tokopay', [WebhookController::class, 'tokopay'])->name('webhooks.tokopay');
     Route::post('/webhooks/xendit', [WebhookController::class, 'xendit'])->name('webhooks.xendit');
+    Route::post('/webhooks/pakasir', [WebhookController::class, 'pakasir'])->name('webhooks.pakasir');
 
     // Merchant API endpoints protected by api_key token validation middleware
     Route::middleware('merchant.auth')->group(function (): void {

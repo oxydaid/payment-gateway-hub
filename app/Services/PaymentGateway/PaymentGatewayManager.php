@@ -4,6 +4,7 @@ namespace App\Services\PaymentGateway;
 
 use App\Models\PaymentGateway;
 use App\Services\PaymentGateway\Drivers\MidtransDriver;
+use App\Services\PaymentGateway\Drivers\PakasirDriver;
 use App\Services\PaymentGateway\Drivers\TokopayDriver;
 use App\Services\PaymentGateway\Drivers\TripayDriver;
 use App\Services\PaymentGateway\Drivers\XenditDriver;
@@ -21,6 +22,7 @@ class PaymentGatewayManager
         'tripay' => TripayDriver::class,
         'tokopay' => TokopayDriver::class,
         'xendit' => XenditDriver::class,
+        'pakasir' => PakasirDriver::class,
     ];
 
     /**
@@ -105,6 +107,14 @@ class PaymentGatewayManager
                 'fields' => [
                     ['key' => 'secret_key', 'label' => 'Secret Key', 'type' => 'password', 'placeholder' => 'xnd_development_...'],
                     ['key' => 'callback_token', 'label' => 'Callback Verification Token', 'type' => 'text', 'placeholder' => 'Callback token from settings...'],
+                ],
+            ],
+            [
+                'name' => 'Pakasir Payment Gateway',
+                'code' => 'pakasir',
+                'fields' => [
+                    ['key' => 'project_slug', 'label' => 'Project Slug', 'type' => 'text', 'placeholder' => 'depodomain'],
+                    ['key' => 'api_key', 'label' => 'API Key', 'type' => 'password', 'placeholder' => 'Project API Key...'],
                 ],
             ],
         ];

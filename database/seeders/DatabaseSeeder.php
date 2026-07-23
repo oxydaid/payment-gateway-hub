@@ -80,6 +80,18 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
+        $pakasir = PaymentGateway::updateOrCreate(
+            ['code' => 'pakasir'],
+            [
+                'name' => 'Pakasir',
+                'is_active' => true,
+                'credentials' => [
+                    'project_slug' => 'depodomain',
+                    'api_key' => 'pakasir-api-key-demo',
+                ],
+            ]
+        );
+
         // 5. Create Payment Methods
         $qris = PaymentMethod::updateOrCreate(
             ['code' => 'qris', 'payment_gateway_id' => $midtrans->id],
@@ -113,6 +125,30 @@ class DatabaseSeeder extends Seeder
                 'fee_type' => 'mix',
                 'fee_fix' => 2000,
                 'fee_percent' => 0.7,
+                'is_active' => true,
+            ]
+        );
+
+        $qrisPakasir = PaymentMethod::updateOrCreate(
+            ['code' => 'qris', 'payment_gateway_id' => $pakasir->id],
+            [
+                'name' => 'QRIS (Pakasir)',
+                'type' => 'qris',
+                'fee_type' => 'percent',
+                'fee_fix' => 0,
+                'fee_percent' => 0.7,
+                'is_active' => true,
+            ]
+        );
+
+        $bniVaPakasir = PaymentMethod::updateOrCreate(
+            ['code' => 'bni_va', 'payment_gateway_id' => $pakasir->id],
+            [
+                'name' => 'BNI Virtual Account (Pakasir)',
+                'type' => 'va',
+                'fee_type' => 'fix',
+                'fee_fix' => 3000,
+                'fee_percent' => 0,
                 'is_active' => true,
             ]
         );

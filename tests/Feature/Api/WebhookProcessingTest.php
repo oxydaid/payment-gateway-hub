@@ -432,3 +432,68 @@ test('it processes xendit v3 payment request webhook successfully', function ():
 
     Queue::assertPushed(SendMerchantCallbackJob::class);
 });
+
+test('it processes pakasir webhook successfully', function (): void {
+    Queue::fake();
+
+    $merchant = Merchant::create([
+        'name' => 'Test Merchant',
+        'api_key' => 'test-key',
+        'is_active' => true,
+        'webhook_url' => 'https://merchant.com/webhook',
+    ]);
+
+    $gateway = PaymentGateway::create([
+        'name' => 'Pakasir',
+        'code' => 'pakasir',
+        'credentials' => [
+            'project_slug' => 'depodomain',
+            'api_key' => 'pakasir-api-key',
+        ],
+        'is_active' => true,
+    ]);
+
+    $method = PaymentMethod::create([
+        'payment_gateway_id' => $gateway->id,
+        'name' => 'QRIS (Pakasir)',
+        'code' => 'qris',
+        'type' => 'qris',
+        'fee_type' => 'percent',
+        'fee_fix' => 0,
+        'fee_percent' => 0.7,
+        'is_active' => true,
+    ]);
+
+    $transaction = Transaction::create([
+        'reference_id' => 'tx-pakasir-123',
+        'merchant_id' => $merchant->id,
+        'merchant_ref_id' => 'INV-1005',
+        'payment_method_id' => $method->id,
+        'amount' => 100000,
+        'fee' => 700,
+        'total_amount' => 100700,
+        'status' => 'PENDING',
+        'expired_at' => now()->addHours(24),
+    ]);
+
+    $payload = [
+        'amount' => 100700,
+        'order_id' => 'tx-pakasir-123',
+        'project' => 'depodomain',
+        'status' => 'completed',
+        'payment_method' => 'qris',
+        'completed_at' => '2026-07-23T10:45:00+07:00',
+    ];
+
+    $response = $this->postJson(route('webhooks.pakasir'), $payload);
+
+    $response->assertOk();
+    $response->assertJsonPath('success', true);
+
+    $transaction->refresh();
+    expect($transaction->status)->toBe('PAID');
+    expect($transaction->paid_at)->not->toBeNull();
+    expect($transaction->pg_ref_id)->toBe('tx-pakasir-123');
+
+    Queue::assertPushed(SendMerchantCallbackJob::class);
+});

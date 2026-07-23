@@ -81,6 +81,16 @@ class WebhookController extends Controller
     }
 
     /**
+     * Handle Pakasir Webhook.
+     */
+    public function pakasir(Request $request): JsonResponse
+    {
+        return $this->processWebhook($request, 'pakasir', function (array $payload) {
+            return $payload['order_id'] ?? null;
+        });
+    }
+
+    /**
      * Core Webhook processing logic.
      */
     protected function processWebhook(Request $request, string $gatewayCode, callable $extractRefId): JsonResponse
