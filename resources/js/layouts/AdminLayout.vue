@@ -282,6 +282,13 @@ function isRouteActive(href: string): boolean {
                                     </div>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator class="bg-border" />
+                                <DropdownMenuItem as-child class="hover:bg-muted cursor-pointer text-foreground">
+                                    <Link href="/profile" class="flex w-full items-center">
+                                        <User class="mr-2 h-4 w-4 text-muted-foreground" />
+                                        <span>Edit Profile</span>
+                                    </Link>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator class="bg-border" />
                                 <DropdownMenuItem @click="logout" class="hover:bg-muted text-destructive focus:text-destructive cursor-pointer">
                                     <LogOut class="mr-2 h-4 w-4" />
                                     <span>Log out</span>

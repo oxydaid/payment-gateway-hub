@@ -3,10 +3,10 @@
 namespace App\Services\PaymentGateway;
 
 use App\Models\PaymentGateway;
+use App\Services\PaymentGateway\Drivers\AriepulsaDriver;
 use App\Services\PaymentGateway\Drivers\MidtransDriver;
 use App\Services\PaymentGateway\Drivers\PakasirDriver;
 use App\Services\PaymentGateway\Drivers\TokopayDriver;
-use App\Services\PaymentGateway\Drivers\TripayDriver;
 use App\Services\PaymentGateway\Drivers\XenditDriver;
 use InvalidArgumentException;
 
@@ -19,10 +19,10 @@ class PaymentGatewayManager
      */
     protected array $drivers = [
         'midtrans' => MidtransDriver::class,
-        'tripay' => TripayDriver::class,
         'tokopay' => TokopayDriver::class,
         'xendit' => XenditDriver::class,
         'pakasir' => PakasirDriver::class,
+        'ariepulsa' => AriepulsaDriver::class,
     ];
 
     /**
@@ -39,7 +39,7 @@ class PaymentGatewayManager
     public function getValidationRules(string $code): array
     {
         if (! isset($this->drivers[$code])) {
-            return [];
+            throw new InvalidArgumentException("Unsupported gateway driver: {$code}");
         }
 
         $driverClass = $this->drivers[$code];
@@ -52,16 +52,14 @@ class PaymentGatewayManager
     }
 
     /**
-     * Resolve and return the correct gateway driver instance.
-     *
-     * @throws InvalidArgumentException
+     * Instantiate a driver for a given PaymentGateway instance.
      */
     public function driver(PaymentGateway $gateway): GatewayDriverInterface
     {
         $code = $gateway->code;
 
         if (! isset($this->drivers[$code])) {
-            throw new InvalidArgumentException("Gateway driver [{$code}] is not supported.");
+            throw new InvalidArgumentException("Unsupported gateway driver: {$code}");
         }
 
         $driverClass = $this->drivers[$code];
@@ -82,15 +80,6 @@ class PaymentGatewayManager
                     ['key' => 'merchant_id', 'label' => 'Merchant ID', 'type' => 'text', 'placeholder' => 'G123456789'],
                     ['key' => 'client_key', 'label' => 'Client Key', 'type' => 'text', 'placeholder' => 'SB-Mid-client-...'],
                     ['key' => 'server_key', 'label' => 'Server Key', 'type' => 'password', 'placeholder' => 'SB-Mid-server-...'],
-                ],
-            ],
-            [
-                'name' => 'Tripay Payment Gateway',
-                'code' => 'tripay',
-                'fields' => [
-                    ['key' => 'merchant_code', 'label' => 'Merchant Code', 'type' => 'text', 'placeholder' => 'T12345'],
-                    ['key' => 'api_key', 'label' => 'API Key', 'type' => 'text', 'placeholder' => 'DEV-...'],
-                    ['key' => 'private_key', 'label' => 'Private Key', 'type' => 'password', 'placeholder' => 'Secret private key...'],
                 ],
             ],
             [
@@ -117,6 +106,32 @@ class PaymentGatewayManager
                     ['key' => 'api_key', 'label' => 'API Key', 'type' => 'password', 'placeholder' => 'Project API Key...'],
                 ],
             ],
+            [
+                'name' => 'Ariepulsa Payment Gateway',
+                'code' => 'ariepulsa',
+                'fields' => [
+                    ['key' => 'api_key', 'label' => 'API Key', 'type' => 'password', 'placeholder' => 'API Key from Arie Pulsa Profile...'],
+                    ['key' => 'type_fee', 'label' => 'Type Fee (1: Customer, 2: Merchant)', 'type' => 'text', 'placeholder' => '1'],
+                ],
+            ],
         ];
+    }
+
+    /**
+     * Get list of payment methods supported by a given driver.
+     */
+    public function getPaymentMethods(string $code): array
+    {
+        if (! isset($this->drivers[$code])) {
+            return [];
+        }
+
+        $driverClass = $this->drivers[$code];
+
+        if (method_exists($driverClass, 'getPaymentMethods')) {
+            return $driverClass::getPaymentMethods();
+        }
+
+        return [];
     }
 }

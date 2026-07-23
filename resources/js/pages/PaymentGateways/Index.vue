@@ -43,10 +43,17 @@ interface DriverField {
     placeholder?: string;
 }
 
+interface AvailablePaymentMethod {
+    code: string;
+    name: string;
+    type: 'va' | 'qris' | 'ewallet' | 'retail' | 'credit_card';
+}
+
 interface AvailableDriver {
     name: string;
     code: string;
     fields: DriverField[];
+    payment_methods: AvailablePaymentMethod[];
 }
 
 const props = defineProps<{
@@ -83,6 +90,57 @@ const isMethodEditOpen = ref(false);
 const currentGateway = ref<GatewayItem | null>(null);
 const currentMethod = ref<MethodItem | null>(null);
 const selectedDriverCode = ref('');
+const selectedMethodCode = ref('');
+
+const activeGatewayMethods = computed(() => {
+    if (!currentGateway.value) return [];
+    const driver = props.available_drivers.find(d => d.code === currentGateway.value.code);
+    return driver?.payment_methods || [];
+});
+
+function getAutomaticIconUrl(name: string): string | null {
+    if (!name) return null;
+    let clean = name.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    
+    if (clean.endsWith('_virtual_account')) {
+        clean = clean.replace('_virtual_account', '_va');
+    }
+    if (clean.includes('virtualaccount')) {
+        clean = clean.replace('virtualaccount', '_va');
+    }
+    if (clean.startsWith('qris')) {
+        clean = 'qris';
+    }
+    
+    const knownFiles = [
+        'alfamart', 'bca_va', 'bni_va', 'bri_va', 'bsi_va', 'btn_va',
+        'cimb_va', 'dana', 'gopay', 'indomaret', 'linkaja', 'ovo',
+        'permata_va', 'qris', 'shopeepay', 'mandiri_va' 
+    ];
+    
+    const match = knownFiles.find(f => {
+        const fBase = f.replace('_va', '');
+        return clean === f || clean.includes(f) || clean.includes(fBase);
+    });
+    
+    if (match) {
+        return `/images/payment-method/${match}.svg`;
+    }
+    return null;
+}
+
+function onMethodSelected() {
+    const method = activeGatewayMethods.value.find(m => m.code === selectedMethodCode.value);
+    if (method) {
+        methodForm.name = method.name;
+        methodForm.code = method.code;
+        methodForm.type = method.type;
+        
+        // Auto resolve icon
+        const autoIcon = getAutomaticIconUrl(method.name) || getAutomaticIconUrl(method.code);
+        createMethodIconPreview.value = autoIcon;
+    }
+}
 
 // Previews
 const createMethodIconPreview = ref<string | null>(null);
@@ -211,6 +269,7 @@ function openCreateMethod(gateway: GatewayItem) {
     currentGateway.value = gateway;
     methodForm.reset();
     methodForm.clearErrors();
+    selectedMethodCode.value = '';
     createMethodIconPreview.value = null;
     isMethodCreateOpen.value = true;
 }
@@ -356,7 +415,7 @@ function formatIdr(value: number): string {
                             <div class="flex items-start justify-between">
                                 <div class="flex items-center gap-3">
                                     <div class="h-8 w-8 rounded bg-muted flex items-center justify-center border border-border overflow-hidden">
-                                        <img v-if="method.icon_url" :src="method.icon_url" class="h-full w-full object-contain p-0.5" />
+                                        <img v-if="method.icon_url || getAutomaticIconUrl(method.name)" :src="method.icon_url || getAutomaticIconUrl(method.name)" class="h-full w-full object-contain p-0.5" />
                                         <DollarSign v-else class="h-4 w-4 text-muted-foreground" />
                                     </div>
                                     <div class="space-y-0.5">
@@ -507,26 +566,34 @@ function formatIdr(value: number): string {
 
                 <form @submit.prevent="submitCreateMethod" class="space-y-4">
                     <div class="space-y-1">
-                        <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Method Name</label>
-                        <Input v-model="methodForm.name" required placeholder="e.g. QRIS, Mandiri Virtual Account" class="bg-muted border-none text-foreground focus-visible:ring-primary focus-visible:ring-1" />
-                        <p v-if="methodForm.errors.name" class="text-xs text-destructive mt-1">{{ methodForm.errors.name }}</p>
+                        <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Select Payment Method</label>
+                        <select 
+                            v-model="selectedMethodCode" 
+                            @change="onMethodSelected"
+                            required
+                            class="w-full h-10 px-3 rounded-md bg-muted text-foreground border border-border text-sm focus:ring-primary focus:ring-1 focus:outline-none"
+                        >
+                            <option value="" disabled>-- Select Method --</option>
+                            <option v-for="m in activeGatewayMethods" :key="m.code" :value="m.code">
+                                {{ m.name }} ({{ m.code }})
+                            </option>
+                        </select>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div class="space-y-1">
-                            <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Method Code</label>
-                            <Input v-model="methodForm.code" required placeholder="e.g. qris, mandiriva" class="bg-muted border-none text-foreground focus-visible:ring-primary focus-visible:ring-1" />
-                            <p v-if="methodForm.errors.code" class="text-xs text-destructive mt-1">{{ methodForm.errors.code }}</p>
+                            <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Method Name</label>
+                            <Input v-model="methodForm.name" required readonly class="bg-muted/60 border-none text-muted-foreground font-semibold" />
+                            <p v-if="methodForm.errors.name" class="text-xs text-destructive mt-1">{{ methodForm.errors.name }}</p>
                         </div>
                         <div class="space-y-1">
-                            <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category Type</label>
-                            <select v-model="methodForm.type" class="w-full h-10 px-3 rounded-md bg-muted text-foreground border-none text-sm focus:ring-primary">
-                                <option value="qris">QRIS</option>
-                                <option value="va">Virtual Account</option>
-                                <option value="ewallet">E-Wallet</option>
-                                <option value="retail">Retail Outlet</option>
-                                <option value="credit_card">Credit Card</option>
-                            </select>
+                            <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Method Code</label>
+                            <Input v-model="methodForm.code" required readonly class="bg-muted/60 border-none text-muted-foreground font-mono" />
+                            <p v-if="methodForm.errors.code" class="text-xs text-destructive mt-1">{{ methodForm.errors.code }}</p>
                         </div>
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category Type</label>
+                        <Input v-model="methodForm.type" required readonly class="bg-muted/60 border-none text-muted-foreground font-semibold" />
                     </div>
 
                     <!-- Method Icon Upload -->

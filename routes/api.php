@@ -7,10 +7,10 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1')->group(function (): void {
     // Public webhook endpoints for payment gateways
     Route::post('/webhooks/midtrans', [WebhookController::class, 'midtrans'])->name('webhooks.midtrans');
-    Route::post('/webhooks/tripay', [WebhookController::class, 'tripay'])->name('webhooks.tripay');
     Route::post('/webhooks/tokopay', [WebhookController::class, 'tokopay'])->name('webhooks.tokopay');
     Route::post('/webhooks/xendit', [WebhookController::class, 'xendit'])->name('webhooks.xendit');
     Route::post('/webhooks/pakasir', [WebhookController::class, 'pakasir'])->name('webhooks.pakasir');
+    Route::post('/webhooks/ariepulsa', [WebhookController::class, 'ariepulsa'])->name('webhooks.ariepulsa');
 
     // Merchant API endpoints protected by api_key token validation middleware
     Route::middleware('merchant.auth')->group(function (): void {

@@ -30,6 +30,22 @@ class PakasirDriver implements GatewayDriverInterface
         ];
     }
 
+    public static function getPaymentMethods(): array
+    {
+        return [
+            ['code' => 'qris', 'name' => 'QRIS', 'type' => 'qris'],
+            ['code' => 'atm_bersama_va', 'name' => 'ATM Bersama Virtual Account', 'type' => 'va'],
+            ['code' => 'bni_va', 'name' => 'BNI Virtual Account', 'type' => 'va'],
+            ['code' => 'bri_va', 'name' => 'BRI Virtual Account', 'type' => 'va'],
+            ['code' => 'permata_va', 'name' => 'Permata Virtual Account', 'type' => 'va'],
+            ['code' => 'cimb_niaga_va', 'name' => 'CIMB Niaga Virtual Account', 'type' => 'va'],
+            ['code' => 'sampoerna_va', 'name' => 'Sampoerna Virtual Account', 'type' => 'va'],
+            ['code' => 'bnc_va', 'name' => 'BNC Virtual Account', 'type' => 'va'],
+            ['code' => 'maybank_va', 'name' => 'Maybank Virtual Account', 'type' => 'va'],
+            ['code' => 'artha_graha_va', 'name' => 'Artha Graha Virtual Account', 'type' => 'va'],
+        ];
+    }
+
     public function createPayment(Transaction $transaction): GatewayPaymentResponse
     {
         $paymentCode = $this->mapPaymentMethod($transaction->paymentMethod->code);
@@ -64,17 +80,18 @@ class PakasirDriver implements GatewayDriverInterface
         $paymentNumber = $payment['payment_number'] ?? null;
         $qrisUrl = null;
         if ($paymentCode === 'qris' && ! empty($paymentNumber)) {
-            $qrisUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data='.urlencode($paymentNumber);
+            $qrisUrl = $paymentNumber; // Pass raw QRIS string to let the controller download/save it
         }
 
-        $checkoutUrl = 'https://app.pakasir.com/pay/'.$this->projectSlug.'/'.(int) $transaction->total_amount.'?order_id='.$transaction->reference_id;
+        $checkoutUrl = 'https://app.pakasir.com/pay/'.$this->projectSlug.'/'.(int) $transaction->total_amount.'?order_id='.$transaction->reference_id.'&redirect='.urlencode(url('/payments/checkout/'.$transaction->reference_id));
 
         return new GatewayPaymentResponse(
             pgRefId: $payment['order_id'] ?? $transaction->reference_id,
             checkoutUrl: $checkoutUrl,
             qrisUrl: $qrisUrl,
             status: 'PENDING',
-            rawResponse: $data
+            rawResponse: $data,
+            paymentCode: $paymentNumber
         );
     }
 

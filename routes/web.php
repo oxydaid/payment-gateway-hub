@@ -6,7 +6,9 @@ use App\Http\Controllers\Dashboard\AppSettingController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\MerchantController;
 use App\Http\Controllers\Dashboard\PaymentGatewayController;
+use App\Http\Controllers\Dashboard\ProfileController;
 use App\Http\Controllers\Dashboard\TransactionController;
+use App\Http\Controllers\PaymentCheckoutController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
@@ -52,8 +54,14 @@ Route::middleware('auth')->group(function () {
     Route::get('/app-settings', [AppSettingController::class, 'index'])->name('app-settings.index');
     Route::post('/app-settings', [AppSettingController::class, 'update'])->name('app-settings.update');
 
+    // Profile Settings
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
+
     // Webhook Docs
     Route::get('/docs/webhook', function () {
         return inertia('Docs/Webhook');
     })->name('docs.webhook');
 });
+
+Route::get('/payments/checkout/{reference_id}', [PaymentCheckoutController::class, 'show'])->name('payments.checkout');

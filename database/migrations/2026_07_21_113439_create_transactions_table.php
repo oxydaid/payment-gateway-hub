@@ -26,6 +26,8 @@ return new class extends Migration
             $table->json('pg_response')->nullable(); // Raw response awal
             $table->string('checkout_url')->nullable(); // URL bayar dari response payment gateway
             $table->string('qris_url')->nullable(); // URL gambar qris bayar dari response payment gateway jika channel yang dipilih qris
+            $table->string('payment_code')->nullable(); // String QRIS atau No Virtual Account
+            $table->string('redirect_url', 500)->nullable(); // Redirect URL merchant (dinamis)
 
             $table->enum('status', ['PENDING', 'PAID', 'DONE', 'FAILED', 'EXPIRED', 'REFUNDED'])->default('PENDING');
             $table->string('pg_status')->nullable();

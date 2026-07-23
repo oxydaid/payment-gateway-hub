@@ -38,6 +38,20 @@ class MidtransDriver implements GatewayDriverInterface
         ];
     }
 
+    public static function getPaymentMethods(): array
+    {
+        return [
+            ['code' => 'bca_va', 'name' => 'BCA Virtual Account', 'type' => 'va'],
+            ['code' => 'bni_va', 'name' => 'BNI Virtual Account', 'type' => 'va'],
+            ['code' => 'bri_va', 'name' => 'BRI Virtual Account', 'type' => 'va'],
+            ['code' => 'mandiri_va', 'name' => 'Mandiri Virtual Account', 'type' => 'va'],
+            ['code' => 'permata_va', 'name' => 'Permata Virtual Account', 'type' => 'va'],
+            ['code' => 'qris', 'name' => 'QRIS', 'type' => 'qris'],
+            ['code' => 'gopay', 'name' => 'GoPay', 'type' => 'ewallet'],
+            ['code' => 'shopeepay', 'name' => 'ShopeePay', 'type' => 'ewallet'],
+        ];
+    }
+
     public function createPayment(Transaction $transaction): GatewayPaymentResponse
     {
         $baseUrl = $this->isProduction
@@ -55,6 +69,9 @@ class MidtransDriver implements GatewayDriverInterface
             'customer_details' => [
                 'first_name' => $transaction->merchant->name,
                 'email' => 'merchant_'.$transaction->merchant_id.'@example.com',
+            ],
+            'callbacks' => [
+                'finish' => url('/payments/checkout/'.$transaction->reference_id),
             ],
         ];
 
@@ -90,7 +107,8 @@ class MidtransDriver implements GatewayDriverInterface
             checkoutUrl: $data['redirect_url'] ?? null,
             qrisUrl: null,
             status: 'PENDING',
-            rawResponse: $data
+            rawResponse: $data,
+            paymentCode: null
         );
     }
 

@@ -59,6 +59,7 @@ test('it creates a payment successfully using midtrans', function (): void {
         'merchant_ref_id' => 'INV-1001',
         'payment_method_id' => $method->id,
         'amount' => 100000,
+        'redirect_url' => 'https://merchant.example.com/redirect',
     ]);
 
     $response->assertStatus(201);
@@ -78,6 +79,7 @@ test('it creates a payment successfully using midtrans', function (): void {
         'total_amount' => 104500,
         'status' => 'PENDING',
         'checkout_url' => 'https://mock-checkout-url.com',
+        'redirect_url' => 'https://merchant.example.com/redirect',
     ]);
 });
 
@@ -116,6 +118,7 @@ test('it calculates mix fee type successfully', function (): void {
         'merchant_ref_id' => 'INV-MIX-1',
         'payment_method_id' => $method->id,
         'amount' => 100000,
+        'redirect_url' => 'https://merchant.example.com/redirect',
     ]);
 
     // 100000 * 0.7% = 700. 700 + 2000 = 2700.
@@ -331,4 +334,68 @@ test('it fetches merchant webhook logs paginated', function (): void {
         ],
         'pagination' => ['current_page', 'last_page', 'per_page', 'total'],
     ]);
+});
+
+test('it creates a payment successfully using ariepulsa', function (): void {
+    Http::fake([
+        'https://ariepulsa.com/api/qrisgo' => Http::response([
+            'status' => true,
+            'data' => [
+                'kode_deposit' => 'TRX-00009',
+                'metode' => 'QRISGO',
+                'nominal' => 1000,
+                'fee' => 7,
+                'jumlah_transfer' => 1007,
+                'saldo_didapat' => 1000,
+                'type_fee' => 1,
+                'status' => 'Pending',
+                'qr_string' => '00020101021226610014COM.GO-JEK.WWW01189360091436153605820210G6153605820303UMI51440014ID.CO.QRIS.WWW0215ID10243520731660303UMI520450455303360540410075802ID5924Arienet Computer, PERCUT6012DELI SERDANG61052037162395028A2202607231140390Fp5L5TspAID0703A016304A8E2',
+                'link_qr' => 'https://ariepulsa.com/assets/images/qris/TRX-00009.png',
+                'link_payment' => 'https://ariepulsa.com/pay-qrisgo/TRX-00009',
+                'expired_at' => '2026-07-23 18:55:40',
+                'panduan_pembayaran' => '1. Scan QRIS...',
+            ],
+        ], 200),
+        'https://api.qrserver.com/*' => Http::response('mock-qr-image-content', 200),
+    ]);
+
+    $merchant = Merchant::create([
+        'name' => 'Test Merchant AP',
+        'api_key' => 'test-key-ap',
+        'is_active' => true,
+    ]);
+
+    $gateway = PaymentGateway::create([
+        'name' => 'Ariepulsa',
+        'code' => 'ariepulsa',
+        'credentials' => [
+            'api_key' => 'ariepulsa-api-key',
+        ],
+        'is_active' => true,
+    ]);
+
+    $method = PaymentMethod::create([
+        'payment_gateway_id' => $gateway->id,
+        'name' => 'QRIS GO',
+        'code' => 'qrisgo',
+        'type' => 'qris',
+        'fee_type' => 'fix',
+        'fee_fix' => 7,
+        'fee_percent' => 0,
+        'is_active' => true,
+    ]);
+
+    $response = $this->withToken('test-key-ap')->postJson(route('payments.store'), [
+        'merchant_ref_id' => 'INV-AP-1',
+        'payment_method_id' => $method->id,
+        'amount' => 1000,
+        'redirect_url' => 'https://merchant.example.com/redirect',
+    ]);
+
+    $response->assertStatus(201);
+    $response->assertJsonPath('success', true);
+    $response->assertJsonPath('data.amount', 1000);
+    $response->assertJsonPath('data.fee', 7);
+    $response->assertJsonPath('data.total_amount', 1007);
+    $response->assertJsonPath('data.status', 'PENDING');
 });

@@ -84,145 +84,6 @@ test('it processes midtrans webhook successfully', function (): void {
     });
 });
 
-test('it processes tripay webhook successfully', function (): void {
-    Queue::fake();
-
-    $merchant = Merchant::create([
-        'name' => 'Test Merchant',
-        'api_key' => 'test-key',
-        'is_active' => true,
-        'webhook_url' => 'https://merchant.com/webhook',
-    ]);
-
-    $gateway = PaymentGateway::create([
-        'name' => 'Tripay',
-        'code' => 'tripay',
-        'credentials' => [
-            'private_key' => 'tripay-private-key',
-            'api_key' => 'tripay-api-key',
-        ],
-        'is_active' => true,
-    ]);
-
-    $method = PaymentMethod::create([
-        'payment_gateway_id' => $gateway->id,
-        'name' => 'BCA Virtual Account',
-        'code' => 'bca_va',
-        'type' => 'va',
-        'fee_type' => 'fix',
-        'fee_fix' => 4500,
-        'fee_percent' => 0,
-        'is_active' => true,
-    ]);
-
-    $transaction = Transaction::create([
-        'reference_id' => 'tx-tripay-123',
-        'merchant_id' => $merchant->id,
-        'merchant_ref_id' => 'INV-1002',
-        'payment_method_id' => $method->id,
-        'amount' => 100000,
-        'fee' => 4500,
-        'total_amount' => 104500,
-        'status' => 'PENDING',
-        'expired_at' => now()->addHours(24),
-    ]);
-
-    $payload = [
-        'reference' => 'tripay-tx-999',
-        'merchant_ref' => 'tx-tripay-123',
-        'status' => 'PAID',
-        'paid_at' => time(),
-        'total_amount' => 104500,
-        'is_closed_payment' => 1,
-    ];
-
-    $rawBody = json_encode($payload);
-    $signature = hash_hmac('sha256', $rawBody, 'tripay-private-key');
-
-    $response = $this->withHeaders([
-        'X-Callback-Signature' => $signature,
-        'X-Callback-Event' => 'payment_status',
-    ])->postJson(route('webhooks.tripay'), $payload);
-
-    $response->assertOk();
-    $response->assertJsonPath('success', true);
-
-    $transaction->refresh();
-    expect($transaction->status)->toBe('PAID');
-    expect($transaction->paid_at)->not->toBeNull();
-
-    Queue::assertPushed(SendMerchantCallbackJob::class);
-});
-
-test('it processes tripay webhook successfully with case-insensitive and whitespace event header', function (): void {
-    Queue::fake();
-
-    $merchant = Merchant::create([
-        'name' => 'Test Merchant',
-        'api_key' => 'test-key',
-        'is_active' => true,
-        'webhook_url' => 'https://merchant.com/webhook',
-    ]);
-
-    $gateway = PaymentGateway::create([
-        'name' => 'Tripay',
-        'code' => 'tripay',
-        'credentials' => [
-            'merchant_code' => 'T123',
-            'api_key' => 'tripay-api-key',
-            'private_key' => 'tripay-private-key',
-            'is_production' => false,
-        ],
-        'is_active' => true,
-    ]);
-
-    $method = PaymentMethod::create([
-        'payment_gateway_id' => $gateway->id,
-        'name' => 'BCA Virtual Account',
-        'code' => 'bca_va',
-        'type' => 'va',
-        'fee_type' => 'fix',
-        'fee_fix' => 4500,
-        'fee_percent' => 0,
-        'is_active' => true,
-    ]);
-
-    $transaction = Transaction::create([
-        'reference_id' => 'tx-tripay-124',
-        'merchant_id' => $merchant->id,
-        'merchant_ref_id' => 'INV-1003',
-        'payment_method_id' => $method->id,
-        'amount' => 100000,
-        'fee' => 4500,
-        'total_amount' => 104500,
-        'status' => 'PENDING',
-        'expired_at' => now()->addHours(24),
-    ]);
-
-    $payload = [
-        'reference' => 'tripay-tx-9992',
-        'merchant_ref' => 'tx-tripay-124',
-        'status' => 'PAID',
-        'paid_at' => time(),
-        'total_amount' => 104500,
-        'is_closed_payment' => 1,
-    ];
-
-    $rawBody = json_encode($payload);
-    $signature = hash_hmac('sha256', $rawBody, 'tripay-private-key');
-
-    $response = $this->withHeaders([
-        'X-Callback-Signature' => $signature,
-        'X-Callback-Event' => ' Payment_Status ',
-    ])->postJson(route('webhooks.tripay'), $payload);
-
-    $response->assertOk();
-    $response->assertJsonPath('success', true);
-
-    $transaction->refresh();
-    expect($transaction->status)->toBe('PAID');
-});
-
 test('it processes tokopay webhook successfully', function (): void {
     Queue::fake();
 
@@ -494,6 +355,89 @@ test('it processes pakasir webhook successfully', function (): void {
     expect($transaction->status)->toBe('PAID');
     expect($transaction->paid_at)->not->toBeNull();
     expect($transaction->pg_ref_id)->toBe('tx-pakasir-123');
+
+    Queue::assertPushed(SendMerchantCallbackJob::class);
+});
+
+test('it processes ariepulsa webhook successfully', function (): void {
+    Queue::fake();
+    Http::fake([
+        'https://ariepulsa.com/api/qrisgo' => Http::response([
+            'status' => true,
+            'data' => [
+                'kode_deposit' => 'TRX-00009',
+                'status' => 'Success',
+                'jumlah_transfer' => 1007,
+                'saldo_diterima' => 1000,
+                'detail_pengirim' => '-',
+                'fee' => 7,
+                'link_payment' => 'https://ariepulsa.com/pay-qrisgo/TRX-00009',
+            ],
+        ], 200),
+    ]);
+
+    $merchant = Merchant::create([
+        'name' => 'Test Merchant',
+        'api_key' => 'test-key',
+        'is_active' => true,
+        'webhook_url' => 'https://merchant.com/webhook',
+    ]);
+
+    $gateway = PaymentGateway::create([
+        'name' => 'Ariepulsa',
+        'code' => 'ariepulsa',
+        'credentials' => [
+            'api_key' => 'ariepulsa-api-key',
+        ],
+        'is_active' => true,
+    ]);
+
+    $method = PaymentMethod::create([
+        'payment_gateway_id' => $gateway->id,
+        'name' => 'QRIS GO (Arie Pulsa)',
+        'code' => 'qrisgo',
+        'type' => 'qris',
+        'fee_type' => 'fix',
+        'fee_fix' => 7,
+        'fee_percent' => 0,
+        'is_active' => true,
+    ]);
+
+    $transaction = Transaction::create([
+        'reference_id' => 'tx-ariepulsa-123',
+        'merchant_id' => $merchant->id,
+        'merchant_ref_id' => 'INV-1006',
+        'payment_method_id' => $method->id,
+        'amount' => 1000,
+        'fee' => 7,
+        'total_amount' => 1007,
+        'status' => 'PENDING',
+        'pg_ref_id' => 'TRX-00009',
+        'expired_at' => now()->addHours(24),
+    ]);
+
+    $payload = [
+        'status' => true,
+        'data' => [
+            'kode_deposit' => 'TRX-00009',
+            'status' => 'Success',
+            'jumlah_transfer' => 1007,
+            'saldo_diterima' => 1000,
+            'detail_pengirim' => '-',
+            'fee' => 7,
+            'link_payment' => 'https://ariepulsa.com/pay-qrisgo/TRX-00009',
+        ],
+    ];
+
+    $response = $this->postJson(route('webhooks.ariepulsa'), $payload);
+
+    $response->assertOk();
+    $response->assertJsonPath('success', true);
+
+    $transaction->refresh();
+    expect($transaction->status)->toBe('PAID');
+    expect($transaction->paid_at)->not->toBeNull();
+    expect($transaction->pg_ref_id)->toBe('TRX-00009');
 
     Queue::assertPushed(SendMerchantCallbackJob::class);
 });

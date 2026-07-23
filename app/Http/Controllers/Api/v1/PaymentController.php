@@ -16,7 +16,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -167,6 +169,7 @@ class PaymentController extends Controller
                 'status' => 'PENDING',
                 'pg_status' => 'PENDING',
                 'expired_at' => $expiredAt,
+                'redirect_url' => $request->redirect_url,
             ]);
 
             // 2. Call resolved gateway driver
@@ -175,11 +178,29 @@ class PaymentController extends Controller
 
             $gatewayResponse = $driver->createPayment($transaction);
 
+            // Extract payment code and qris url
+            $paymentCode = $gatewayResponse->paymentCode;
+            $qrisUrl = $gatewayResponse->qrisUrl;
+
+            // Detect raw QRIS string and convert to stored local image
+            $rawQris = null;
+            if ($qrisUrl && (str_starts_with($qrisUrl, '000201') || ! filter_var($qrisUrl, FILTER_VALIDATE_URL))) {
+                $rawQris = $qrisUrl;
+            } elseif ($paymentCode && str_starts_with($paymentCode, '000201')) {
+                $rawQris = $paymentCode;
+            }
+
+            if ($rawQris) {
+                $paymentCode = $rawQris;
+                $qrisUrl = $this->generateQrisImage($rawQris, $transaction->reference_id);
+            }
+
             // 3. Update transaction with PG details
             $transaction->update([
                 'pg_ref_id' => $gatewayResponse->pgRefId,
                 'checkout_url' => $gatewayResponse->checkoutUrl,
-                'qris_url' => $gatewayResponse->qrisUrl,
+                'qris_url' => $qrisUrl,
+                'payment_code' => $paymentCode,
                 'pg_status' => $gatewayResponse->status ?? 'PENDING',
                 'pg_response' => [
                     'create' => $gatewayResponse->rawResponse,
@@ -208,5 +229,32 @@ class PaymentController extends Controller
                 'message' => 'Payment creation failed: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Generate local QRIS image and store it on public disk.
+     */
+    protected function generateQrisImage(string $qrContent, string $referenceId): ?string
+    {
+        try {
+            $response = Http::get('https://api.qrserver.com/v1/create-qr-code/', [
+                'size' => '300x300',
+                'data' => $qrContent,
+            ]);
+
+            if ($response->successful()) {
+                $fileName = 'qris-'.$referenceId.'.png';
+                Storage::disk('public')->put('qris/'.$fileName, $response->body());
+
+                return asset('storage/qris/'.$fileName);
+            }
+        } catch (Throwable $e) {
+            Log::error('Failed to generate local QRIS image', [
+                'error' => $e->getMessage(),
+                'qr_content' => $qrContent,
+            ]);
+        }
+
+        return null;
     }
 }

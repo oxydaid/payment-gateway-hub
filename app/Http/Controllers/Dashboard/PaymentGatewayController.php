@@ -25,7 +25,7 @@ class PaymentGatewayController extends Controller
                 'code' => $gateway->code,
                 'is_active' => $gateway->is_active,
                 'credentials' => $gateway->credentials,
-                'icon_url' => $gateway->icon_url,
+                'icon_url' => $gateway->icon_url ?: $this->getGatewayIcon($gateway->name),
                 'payment_methods' => $gateway->paymentMethods->map(function ($method) {
                     return [
                         'id' => $method->id,
@@ -35,15 +35,21 @@ class PaymentGatewayController extends Controller
                         'fee_type' => $method->fee_type,
                         'fee_fix' => $method->fee_fix,
                         'fee_percent' => $method->fee_percent,
-                        'icon_url' => $method->icon ? asset('storage/'.$method->icon) : null,
+                        'icon_url' => $method->icon ? asset('storage/'.$method->icon) : $this->getMethodIcon($method->name),
                     ];
                 }),
             ];
         });
 
+        $availableDrivers = collect($this->gatewayManager->getAvailableDrivers())->map(function ($driver) {
+            $driver['payment_methods'] = $this->gatewayManager->getPaymentMethods($driver['code']);
+
+            return $driver;
+        });
+
         return Inertia::render('PaymentGateways/Index', [
             'gateways' => $gateways,
-            'available_drivers' => $this->gatewayManager->getAvailableDrivers(),
+            'available_drivers' => $availableDrivers,
         ]);
     }
 
@@ -156,5 +162,44 @@ class PaymentGatewayController extends Controller
         $method->delete();
 
         return Inertia::flash('success', "Payment method '{$name}' removed successfully.")->back();
+    }
+
+    protected function getGatewayIcon(string $name): ?string
+    {
+        $name = preg_replace('/[^a-z0-9_]/', '', strtolower($name));
+        $extensions = ['svg', 'png', 'jpg', 'jpeg', 'webp'];
+        foreach ($extensions as $ext) {
+            $path = "images/payment-gateway/{$name}.{$ext}";
+            if (file_exists(public_path($path))) {
+                return asset($path);
+            }
+        }
+
+        return null;
+    }
+
+    protected function getMethodIcon(string $name): ?string
+    {
+        $name = preg_replace('/[^a-z0-9_]/', '', strtolower($name));
+
+        if (str_ends_with($name, '_virtual_account')) {
+            $name = str_replace('_virtual_account', '_va', $name);
+        }
+        if (str_ends_with($name, 'virtualaccount')) {
+            $name = str_replace('virtualaccount', '_va', $name);
+        }
+        if (str_starts_with($name, 'qris')) {
+            $name = 'qris';
+        }
+
+        $extensions = ['svg', 'png', 'jpg', 'jpeg', 'webp'];
+        foreach ($extensions as $ext) {
+            $path = "images/payment-method/{$name}.{$ext}";
+            if (file_exists(public_path($path))) {
+                return asset($path);
+            }
+        }
+
+        return null;
     }
 }

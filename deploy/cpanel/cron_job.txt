@@ -1,0 +1,8 @@
+# cPanel Cron Job Configuration for Laravel Task Scheduler
+# Setup this cron job to run every minute (* * * * *):
+
+* * * * * /usr/local/bin/php /home/username/pg-bridge/artisan schedule:run >> /dev/null 2>&1
+
+# Note:
+# 1. Replace "/home/username/pg-bridge" with the actual absolute path to your project directory.
+# 2. Adjust the php path "/usr/local/bin/php" to match the specific CLI version required (e.g. php82 or php84 depending on hosting CLI availability).

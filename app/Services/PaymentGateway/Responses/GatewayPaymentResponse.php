@@ -9,6 +9,7 @@ class GatewayPaymentResponse
         public ?string $checkoutUrl,
         public ?string $qrisUrl,
         public string $status,
-        public array $rawResponse
+        public array $rawResponse,
+        public ?string $paymentCode = null
     ) {}
 }

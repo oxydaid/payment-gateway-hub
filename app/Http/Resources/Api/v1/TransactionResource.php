@@ -25,6 +25,8 @@ class TransactionResource extends JsonResource
             'pg_status' => $this->pg_status,
             'checkout_url' => $this->checkout_url,
             'qris_url' => $this->qris_url,
+            'payment_code' => $this->payment_code,
+            'redirect_url' => $this->redirect_url,
             'pg_ref_id' => $this->pg_ref_id,
             'paid_at' => $this->paid_at?->toIso8601String(),
             'expired_at' => $this->expired_at?->toIso8601String(),

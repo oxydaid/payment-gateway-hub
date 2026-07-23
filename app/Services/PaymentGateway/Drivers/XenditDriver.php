@@ -34,6 +34,23 @@ class XenditDriver implements GatewayDriverInterface
         ];
     }
 
+    public static function getPaymentMethods(): array
+    {
+        return [
+            ['code' => 'BCA_VIRTUAL_ACCOUNT', 'name' => 'BCA Virtual Account', 'type' => 'va'],
+            ['code' => 'BNI_VIRTUAL_ACCOUNT', 'name' => 'BNI Virtual Account', 'type' => 'va'],
+            ['code' => 'BRI_VIRTUAL_ACCOUNT', 'name' => 'BRI Virtual Account', 'type' => 'va'],
+            ['code' => 'MANDIRI_VIRTUAL_ACCOUNT', 'name' => 'Mandiri Virtual Account', 'type' => 'va'],
+            ['code' => 'PERMATA_VIRTUAL_ACCOUNT', 'name' => 'Permata Virtual Account', 'type' => 'va'],
+            ['code' => 'QRIS', 'name' => 'QRIS', 'type' => 'qris'],
+            ['code' => 'GOPAY', 'name' => 'GoPay', 'type' => 'ewallet'],
+            ['code' => 'SHOPEEPAY', 'name' => 'ShopeePay', 'type' => 'ewallet'],
+            ['code' => 'OVO', 'name' => 'OVO', 'type' => 'ewallet'],
+            ['code' => 'DANA', 'name' => 'DANA', 'type' => 'ewallet'],
+            ['code' => 'LINKAJA', 'name' => 'LinkAja', 'type' => 'ewallet'],
+        ];
+    }
+
     public function createPayment(Transaction $transaction): GatewayPaymentResponse
     {
         $baseUrl = 'https://api.xendit.co/v3/payment_requests';
@@ -45,8 +62,8 @@ class XenditDriver implements GatewayDriverInterface
         if ($paymentMethod->type === 'va') {
             $channelProperties['display_name'] = $transaction->merchant->name;
         } elseif (in_array($paymentMethod->type, ['ewallet', 'credit_card'])) {
-            $channelProperties['success_return_url'] = url('/');
-            $channelProperties['failure_return_url'] = url('/');
+            $channelProperties['success_return_url'] = url('/payments/checkout/'.$transaction->reference_id);
+            $channelProperties['failure_return_url'] = url('/payments/checkout/'.$transaction->reference_id);
         }
 
         $payload = [
@@ -56,7 +73,7 @@ class XenditDriver implements GatewayDriverInterface
             'country' => 'ID',
             'request_amount' => (int) $transaction->total_amount,
             'channel_code' => $channelCode,
-            'description' => 'Payment for Order #'.$transaction->order_id,
+            'description' => 'Payment for Order #'.$transaction->merchant_ref_id,
         ];
 
         if (! empty($channelProperties)) {
@@ -87,6 +104,7 @@ class XenditDriver implements GatewayDriverInterface
 
         $checkoutUrl = null;
         $qrisUrl = null;
+        $paymentCode = null;
 
         if (! empty($data['actions'])) {
             foreach ($data['actions'] as $action) {
@@ -98,8 +116,13 @@ class XenditDriver implements GatewayDriverInterface
                     $checkoutUrl = $value;
                 } elseif ($descriptor === 'QR_STRING') {
                     $qrisUrl = $value;
+                    $paymentCode = $value;
                 }
             }
+        }
+
+        if (isset($data['payment_method']['virtual_account']['channel_properties']['virtual_account_number'])) {
+            $paymentCode = $data['payment_method']['virtual_account']['channel_properties']['virtual_account_number'];
         }
 
         return new GatewayPaymentResponse(
@@ -107,7 +130,8 @@ class XenditDriver implements GatewayDriverInterface
             checkoutUrl: $checkoutUrl,
             qrisUrl: $qrisUrl,
             status: $this->mapStatus($data['status'] ?? 'PENDING'),
-            rawResponse: $data
+            rawResponse: $data,
+            paymentCode: $paymentCode
         );
     }
 

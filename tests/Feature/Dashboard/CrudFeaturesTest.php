@@ -75,6 +75,7 @@ test('api middleware validates merchant key from api_keys table', function () {
             'merchant_ref_id' => 'INV-TEST-KEY-1',
             'payment_method_id' => $method->id,
             'amount' => 50000,
+            'redirect_url' => 'https://merchant.example.com/redirect',
         ]);
 
     $response->assertStatus(201);
@@ -112,6 +113,7 @@ test('api middleware validates global key with merchant_id payload', function ()
             'merchant_ref_id' => 'INV-TEST-GLOBAL-1',
             'payment_method_id' => $method->id,
             'amount' => 75000,
+            'redirect_url' => 'https://merchant.example.com/redirect',
         ]);
 
     $response->assertStatus(201);

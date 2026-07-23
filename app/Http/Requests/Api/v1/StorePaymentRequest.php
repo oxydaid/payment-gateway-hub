@@ -50,6 +50,7 @@ class StorePaymentRequest extends FormRequest
                 }),
             ],
             'amount' => ['required', 'numeric', 'min:100'],
+            'redirect_url' => ['required', 'url', 'max:500'],
         ];
     }
 }

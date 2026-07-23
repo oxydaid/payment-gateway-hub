@@ -34,6 +34,33 @@ class TokopayDriver implements GatewayDriverInterface
         ];
     }
 
+    public static function getPaymentMethods(): array
+    {
+        return [
+            ['code' => 'BCAVA', 'name' => 'BCA Virtual Account', 'type' => 'va'],
+            ['code' => 'BNIVA', 'name' => 'BNI Virtual Account', 'type' => 'va'],
+            ['code' => 'BRIVA', 'name' => 'BRI Virtual Account', 'type' => 'va'],
+            ['code' => 'MANDIRIVA', 'name' => 'Mandiri Virtual Account', 'type' => 'va'],
+            ['code' => 'PERMATAVA', 'name' => 'Permata Virtual Account', 'type' => 'va'],
+            ['code' => 'CIMBVA', 'name' => 'CIMB Virtual Account', 'type' => 'va'],
+            ['code' => 'BSIVA', 'name' => 'BSI Virtual Account', 'type' => 'va'],
+            ['code' => 'QRIS', 'name' => 'QRIS', 'type' => 'qris'],
+            ['code' => 'QRISREALTIME', 'name' => 'QRIS Realtime', 'type' => 'qris'],
+            ['code' => 'QRIS_CUSTOM', 'name' => 'QRIS Custom', 'type' => 'qris'],
+            ['code' => 'GOPAY', 'name' => 'GoPay', 'type' => 'ewallet'],
+            ['code' => 'GOPAY_REALTIME', 'name' => 'GoPay Realtime', 'type' => 'ewallet'],
+            ['code' => 'SHOPEEPAY', 'name' => 'ShopeePay', 'type' => 'ewallet'],
+            ['code' => 'SHOPEEPAY_REALTIME', 'name' => 'ShopeePay Realtime', 'type' => 'ewallet'],
+            ['code' => 'OVOPUSH', 'name' => 'OVO Push', 'type' => 'ewallet'],
+            ['code' => 'OVOPUSH_REALTIME', 'name' => 'OVO Push Realtime', 'type' => 'ewallet'],
+            ['code' => 'DANA', 'name' => 'DANA', 'type' => 'ewallet'],
+            ['code' => 'DANA_REALTIME', 'name' => 'DANA Realtime', 'type' => 'ewallet'],
+            ['code' => 'LINKAJA', 'name' => 'LinkAja', 'type' => 'ewallet'],
+            ['code' => 'ALFAMART', 'name' => 'Alfamart', 'type' => 'retail'],
+            ['code' => 'INDOMARET', 'name' => 'Indomaret', 'type' => 'retail'],
+        ];
+    }
+
     public function createPayment(Transaction $transaction): GatewayPaymentResponse
     {
         // Tokopay uses api.tokopay.id
@@ -49,13 +76,13 @@ class TokopayDriver implements GatewayDriverInterface
 
         $payload = [
             'merchant_id' => $this->merchantId,
-            'kode_channel' => $paymentCode,
+            'kode_channel' => is_array($paymentCode) ? $paymentCode[0] : $paymentCode,
             'reff_id' => $refId,
             'amount' => $amount,
             'customer_name' => $transaction->merchant->name,
             'customer_email' => 'merchant_'.$transaction->merchant_id.'@example.com',
             'customer_phone' => '081234567890',
-            'redirect_url' => url('/'), // Fallback URL
+            'redirect_url' => url('/payments/checkout/'.$transaction->reference_id),
             'expired_ts' => 0,
             'signature' => $signature,
         ];
@@ -81,13 +108,15 @@ class TokopayDriver implements GatewayDriverInterface
         }
 
         $result = $data['data'] ?? [];
+        $extractedPaymentCode = $result['nomor_va'] ?? $result['pay_code'] ?? $result['qr_string'] ?? null;
 
         return new GatewayPaymentResponse(
             pgRefId: $result['trx_id'] ?? null,
             checkoutUrl: $result['pay_url'] ?? $result['checkout_url'] ?? null,
             qrisUrl: $result['qr_link'] ?? null,
             status: 'PENDING',
-            rawResponse: $data
+            rawResponse: $data,
+            paymentCode: $extractedPaymentCode
         );
     }
 
@@ -210,12 +239,16 @@ class TokopayDriver implements GatewayDriverInterface
             'bri_va' => 'BRIVA',
             'mandiri_va' => 'MANDIRIVA',
             'permata_va' => 'PERMATAVA',
-            'qris' => 'QRIS',
-            'gopay' => 'GOPAY',
-            'shopeepay' => 'SHOPEEPAY',
-            'ovo' => 'OVO',
-            'dana' => 'DANA',
+            'cimb_va' => 'CIMBVA',
+            'bsi_va' => 'BSIVA',
+            'qris' => ['QRIS', 'QRISREALTIME', 'QRIS_CUSTOM'],
+            'gopay' => ['GOPAY', 'GOPAY_REALTIME'],
+            'shopeepay' => ['SHOPEEPAY', 'SHOPEEPAY_REALTIME'],
+            'ovo' => ['OVOPUSH', 'OVOPUSH_REALTIME'],
+            'dana' => ['DANA', 'DANA_REALTIME'],
             'linkaja' => 'LINKAJA',
+            'alfamart' => 'ALFAMART',
+            'indomaret' => 'INDOMARET',
             default => strtoupper(str_replace('_', '', $code)),
         };
     }
