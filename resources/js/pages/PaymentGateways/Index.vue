@@ -251,7 +251,7 @@ function openCredentials(gateway: GatewayItem) {
 
 function saveCredentials() {
     if (!currentGateway.value) return;
-    credentialsForm.post(`/payment-gateways/${currentGateway.value.id}/update`, {
+    credentialsForm.put(`/payment-gateways/${currentGateway.value.id}`, {
         onSuccess: () => {
             isCredentialsOpen.value = false;
         }
@@ -299,11 +299,13 @@ function openEditMethod(method: MethodItem) {
 
 function submitEditMethod() {
     if (!currentMethod.value) return;
-    methodForm.post(`/payment-gateways/methods/${currentMethod.value.id}/update`, {
-        onSuccess: () => {
-            isMethodEditOpen.value = false;
-        }
-    });
+    methodForm
+        .transform((data) => ({ ...data, _method: 'put' }))
+        .post(`/payment-gateways/methods/${currentMethod.value.id}`, {
+            onSuccess: () => {
+                isMethodEditOpen.value = false;
+            }
+        });
 }
 
 function deleteMethod(method: MethodItem) {

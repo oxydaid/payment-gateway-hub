@@ -1,13 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\Dashboard\TransactionListResource;
 use App\Jobs\SendMerchantCallbackJob;
 use App\Models\PaymentGateway;
 use App\Models\Transaction;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -19,25 +23,33 @@ class TransactionController extends Controller
 
         // Filter by Search (Reference ID, Merchant Reference ID, or Merchant Name)
         if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->where(function ($q) use ($search) {
-                $q->where('reference_id', 'like', "%{$search}%")
-                    ->orWhere('merchant_ref_id', 'like', "%{$search}%")
-                    ->orWhereHas('merchant', function ($mQuery) use ($search) {
-                        $mQuery->where('name', 'like', "%{$search}%");
+            $search = trim((string) $request->input('search'));
+            $isMysqlFamily = in_array(DB::getDriverName(), ['mysql', 'mariadb'], true);
+
+            $query->where(function ($q) use ($search, $isMysqlFamily): void {
+                // Prefix match utilizes B-tree indexes on reference_id and merchant_ref_id
+                $q->where('reference_id', 'like', "{$search}%")
+                    ->orWhere('merchant_ref_id', 'like', "{$search}%")
+                    ->orWhereHas('merchant', function ($mQuery) use ($search): void {
+                        $mQuery->where('name', 'like', "{$search}%");
                     });
+
+                // On MariaDB/MySQL, also leverage InnoDB FULLTEXT index on merchant_ref_id for multi-token searches (>= 3 chars)
+                if ($isMysqlFamily && mb_strlen($search) >= 3) {
+                    $q->orWhereFullText(['merchant_ref_id'], $search);
+                }
             });
         }
 
         // Filter by Status
         if ($request->filled('status')) {
-            $query->where('status', $request->input('status'));
+            $query->where('status', (string) $request->input('status'));
         }
 
         // Filter by Gateway
         if ($request->filled('gateway_id')) {
             $gatewayId = $request->input('gateway_id');
-            $query->whereHas('paymentMethod', function ($q) use ($gatewayId) {
+            $query->whereHas('paymentMethod', function ($q) use ($gatewayId): void {
                 $q->where('payment_gateway_id', $gatewayId);
             });
         }
@@ -45,20 +57,7 @@ class TransactionController extends Controller
         $transactions = $query->latest()
             ->paginate(15)
             ->withQueryString()
-            ->through(function ($tx) {
-                return [
-                    'id' => $tx->id,
-                    'reference_id' => $tx->reference_id,
-                    'merchant_name' => $tx->merchant->name,
-                    'gateway_name' => $tx->paymentMethod->gateway->name ?? 'Unknown',
-                    'method_name' => $tx->paymentMethod->name,
-                    'amount' => $tx->amount,
-                    'fee' => $tx->fee,
-                    'total_amount' => $tx->total_amount,
-                    'status' => $tx->status,
-                    'created_at' => $tx->created_at->toIso8601String(),
-                ];
-            });
+            ->through(fn (Transaction $tx): array => (new TransactionListResource($tx))->resolve($request));
 
         $gateways = PaymentGateway::select('id', 'name')->get();
 
@@ -71,7 +70,7 @@ class TransactionController extends Controller
 
     public function show(Transaction $transaction): Response
     {
-        $transaction->load(['paymentMethod.gateway', 'merchant', 'webhookLogs' => function ($q) {
+        $transaction->load(['paymentMethod.gateway', 'merchant', 'webhookLogs' => function ($q): void {
             $q->latest();
         }]);
 
@@ -88,18 +87,18 @@ class TransactionController extends Controller
             'total_amount' => $transaction->total_amount,
             'status' => $transaction->status,
             'pg_status' => $transaction->pg_status,
-            'paid_at' => $transaction->paid_at ? $transaction->paid_at->toIso8601String() : null,
-            'expired_at' => $transaction->expired_at ? $transaction->expired_at->toIso8601String() : null,
-            'created_at' => $transaction->created_at->toIso8601String(),
+            'paid_at' => $transaction->paid_at?->toIso8601String(),
+            'expired_at' => $transaction->expired_at?->toIso8601String(),
+            'created_at' => $transaction->created_at?->toIso8601String(),
             'pg_response' => $transaction->pg_response,
-            'webhook_logs' => $transaction->webhookLogs->map(function ($log) {
+            'webhook_logs' => $transaction->webhookLogs->map(function ($log): array {
                 return [
                     'id' => $log->id,
                     'direction' => $log->direction,
                     'status_code' => $log->status_code,
                     'payload' => $log->payload,
                     'notes' => $log->notes,
-                    'created_at' => $log->created_at->toIso8601String(),
+                    'created_at' => $log->created_at?->toIso8601String(),
                 ];
             }),
         ];

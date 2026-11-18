@@ -41,3 +41,16 @@ test('users can log out', function () {
     $response->assertRedirect('/login');
     $this->assertGuest();
 });
+
+test('login endpoint is throttled after 10 attempts per minute', function (): void {
+    $response = null;
+
+    for ($i = 0; $i < 11; $i++) {
+        $response = $this->post('/login', [
+            'email' => 'admin@example.com',
+            'password' => 'wrong-password',
+        ]);
+    }
+
+    $response->assertStatus(429);
+});

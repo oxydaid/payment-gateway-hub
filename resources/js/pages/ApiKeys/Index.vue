@@ -1,34 +1,35 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { Head, useForm, router } from '@inertiajs/vue3';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { Head, useForm, router, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/layouts/AdminLayout.vue';
-import { 
-    Plus, 
-    Copy, 
-    Check, 
-    Key, 
-    Trash2, 
+import {
+    Plus,
+    Copy,
+    Check,
+    Key,
+    Trash2,
     Edit2,
-    ShieldCheck, 
-    Loader2, 
-    Globe, 
-    Building2 
+    Loader2,
+    Globe,
+    Building2,
+    AlertTriangle,
+    ShieldCheck,
 } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { 
-    Dialog, 
-    DialogContent, 
-    DialogHeader, 
-    DialogTitle, 
-    DialogDescription, 
-    DialogFooter 
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter,
 } from '@/components/ui/dialog';
 
 interface ApiKeyItem {
     id: number;
     name: string;
-    key: string;
+    key_prefix: string;
     is_active: boolean;
     merchant_name: string;
     last_used_at: string | null;
@@ -45,16 +46,71 @@ const props = defineProps<{
     merchants: MerchantOption[];
 }>();
 
-const apiKeysList = ref(props.api_keys.map(k => ({ ...k })));
+const apiKeysList = ref(props.api_keys.map((k) => ({ ...k })));
 
-watch(() => props.api_keys, (newKeys) => {
-    apiKeysList.value = newKeys.map(k => ({ ...k }));
-}, { deep: true });
+watch(
+    () => props.api_keys,
+    (newKeys) => {
+        apiKeysList.value = newKeys.map((k) => ({ ...k }));
+    },
+    { deep: true },
+);
 
 const isCreateOpen = ref(false);
 const isEditOpen = ref(false);
 const currentKey = ref<ApiKeyItem | null>(null);
-const copiedKeyId = ref<number | null>(null);
+
+// One-time plain token display modal (shown only immediately after key generation)
+const newApiKey = ref<string | null>(null);
+const isNewKeyModalOpen = ref(false);
+const copiedNewKey = ref(false);
+
+const page = usePage();
+let removeFlashListener: (() => void) | null = null;
+
+function revealNewKey(token: string | null | undefined) {
+    if (!token) {
+        return;
+    }
+    newApiKey.value = token;
+    copiedNewKey.value = false;
+    isNewKeyModalOpen.value = true;
+}
+
+onMounted(() => {
+    const initialFlash = (page as unknown as { flash?: { new_api_key?: string } }).flash;
+    if (initialFlash?.new_api_key) {
+        revealNewKey(initialFlash.new_api_key);
+    }
+
+    removeFlashListener = router.on('flash', (event) => {
+        const flash = (event as CustomEvent).detail?.flash as { new_api_key?: string } | null;
+        if (flash?.new_api_key) {
+            revealNewKey(flash.new_api_key);
+        }
+    });
+});
+
+onUnmounted(() => {
+    removeFlashListener?.();
+});
+
+function closeNewKeyModal() {
+    isNewKeyModalOpen.value = false;
+    newApiKey.value = null;
+    copiedNewKey.value = false;
+}
+
+function copyNewKey() {
+    if (!newApiKey.value) {
+        return;
+    }
+    navigator.clipboard.writeText(newApiKey.value);
+    copiedNewKey.value = true;
+    setTimeout(() => {
+        copiedNewKey.value = false;
+    }, 2000);
+}
 
 const form = useForm({
     name: '',
@@ -76,7 +132,7 @@ function createKey() {
     form.post('/api-keys', {
         onSuccess: () => {
             isCreateOpen.value = false;
-        }
+        },
     });
 }
 
@@ -89,11 +145,13 @@ function openEdit(key: ApiKeyItem) {
 }
 
 function submitEdit() {
-    if (!currentKey.value) return;
+    if (!currentKey.value) {
+        return;
+    }
     editForm.put(`/api-keys/${currentKey.value.id}`, {
         onSuccess: () => {
             isEditOpen.value = false;
-        }
+        },
     });
 }
 
@@ -103,22 +161,16 @@ function deleteKey(key: ApiKeyItem) {
     }
 }
 
-function copyToClipboard(text: string, id: number) {
-    navigator.clipboard.writeText(text);
-    copiedKeyId.value = id;
-    setTimeout(() => {
-        copiedKeyId.value = null;
-    }, 2000);
-}
-
 function formatDate(isoString: string | null): string {
-    if (!isoString) return 'Never';
+    if (!isoString) {
+        return 'Never';
+    }
     const d = new Date(isoString);
-    return d.toLocaleDateString('id-ID', { 
-        day: '2-digit', 
-        month: 'short', 
-        hour: '2-digit', 
-        minute: '2-digit' 
+    return d.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
     });
 }
 </script>
@@ -133,7 +185,7 @@ function formatDate(isoString: string | null): string {
                 <div>
                     <h2 class="text-lg font-bold text-foreground">System API Keys</h2>
                     <p class="text-sm text-muted-foreground">
-                        Manage Bearer Authentication tokens for global application access or individual merchant integrations.
+                        Manage Bearer Authentication tokens for global application access or individual merchant integrations. Tokens are stored hashed and only shown once on creation.
                     </p>
                 </div>
 
@@ -154,7 +206,7 @@ function formatDate(isoString: string | null): string {
                             <tr class="text-xs font-bold uppercase tracking-wider text-muted-foreground border-b border-border whitespace-nowrap">
                                 <th class="px-6 py-4">Key Label</th>
                                 <th class="px-6 py-4">Scope / Merchant</th>
-                                <th class="px-6 py-4">Token Secret</th>
+                                <th class="px-6 py-4">Token Prefix</th>
                                 <th class="px-6 py-4">Last Used</th>
                                 <th class="px-6 py-4">Status</th>
                                 <th class="px-6 py-4 text-right">Actions</th>
@@ -171,12 +223,12 @@ function formatDate(isoString: string | null): string {
                                     {{ k.name }}
                                 </td>
                                 <td class="px-6 py-4">
-                                    <span 
+                                    <span
                                         :class="[
                                             'px-2.5 py-1 rounded-full text-xs font-bold border inline-flex items-center gap-1.5',
-                                            k.merchant_name.includes('Global') 
-                                                ? 'bg-purple-500/10 text-purple-500 border-purple-500/20' 
-                                                : 'bg-blue-500/10 text-blue-500 border-blue-500/20'
+                                            k.merchant_name.includes('Global')
+                                                ? 'bg-purple-500/10 text-purple-500 border-purple-500/20'
+                                                : 'bg-blue-500/10 text-blue-500 border-blue-500/20',
                                         ]"
                                     >
                                         <Globe v-if="k.merchant_name.includes('Global')" class="h-3 w-3" />
@@ -187,26 +239,22 @@ function formatDate(isoString: string | null): string {
                                 <td class="px-6 py-4">
                                     <div class="flex items-center gap-2">
                                         <code class="bg-muted text-foreground px-2 py-1 rounded text-xs font-mono font-bold border border-border">
-                                            {{ k.key.substring(0, 16) }}••••••••••••
+                                            {{ k.key_prefix }}
                                         </code>
-                                        <button
-                                            @click="copyToClipboard(k.key, k.id)"
-                                            class="p-1 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-                                            title="Copy Token Secret"
-                                        >
-                                            <Check v-if="copiedKeyId === k.id" class="h-4 w-4 text-primary" />
-                                            <Copy v-else class="h-4 w-4" />
-                                        </button>
+                                        <span class="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title="Hashed with SHA-256">
+                                            <ShieldCheck class="h-3.5 w-3.5 text-primary" />
+                                            Hashed
+                                        </span>
                                     </div>
                                 </td>
                                 <td class="px-6 py-4 text-xs font-mono">{{ formatDate(k.last_used_at) }}</td>
                                 <td class="px-6 py-4">
-                                    <span 
+                                    <span
                                         :class="[
-                                            'px-2.5 py-0.5 rounded text-[10px] font-bold border', 
-                                            k.is_active 
-                                                ? 'bg-primary/10 text-primary border-primary/20' 
-                                                : 'bg-destructive/10 text-destructive border-destructive/20'
+                                            'px-2.5 py-0.5 rounded text-[10px] font-bold border',
+                                            k.is_active
+                                                ? 'bg-primary/10 text-primary border-primary/20'
+                                                : 'bg-destructive/10 text-destructive border-destructive/20',
                                         ]"
                                     >
                                         {{ k.is_active ? 'Active' : 'Inactive' }}
@@ -242,6 +290,50 @@ function formatDate(isoString: string | null): string {
             </div>
         </div>
 
+        <!-- One-Time New API Key Reveal Modal -->
+        <Dialog :open="isNewKeyModalOpen" @update:open="(open: boolean) => { if (!open) closeNewKeyModal(); }">
+            <DialogContent class="bg-card border-border text-foreground w-full max-w-lg">
+                <DialogHeader>
+                    <DialogTitle class="text-lg text-foreground flex items-center gap-2">
+                        <ShieldCheck class="h-5 w-5 text-primary" />
+                        Save Your New API Key
+                    </DialogTitle>
+                    <DialogDescription class="text-xs text-muted-foreground">
+                        Copy and store this Bearer token securely. For security reasons, it is stored as a cryptographic hash and will never be displayed again.
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div class="space-y-4 py-2">
+                    <div class="flex items-start gap-2.5 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 text-xs">
+                        <AlertTriangle class="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>If you lose this token, you will need to revoke it and generate a new one.</span>
+                    </div>
+
+                    <div class="flex items-center gap-2 bg-muted p-3 rounded-lg border border-border">
+                        <code class="flex-1 text-xs font-mono font-bold text-foreground break-all select-all">
+                            {{ newApiKey }}
+                        </code>
+                        <Button
+                            type="button"
+                            size="sm"
+                            @click="copyNewKey"
+                            class="bg-primary hover:opacity-90 text-black font-bold shrink-0 flex items-center gap-1.5"
+                        >
+                            <Check v-if="copiedNewKey" class="h-4 w-4" />
+                            <Copy v-else class="h-4 w-4" />
+                            <span>{{ copiedNewKey ? 'Copied' : 'Copy' }}</span>
+                        </Button>
+                    </div>
+                </div>
+
+                <DialogFooter class="pt-2">
+                    <Button type="button" @click="closeNewKeyModal" class="bg-primary hover:opacity-90 text-black font-bold">
+                        I Have Saved This Key
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
         <!-- Add API Key Modal -->
         <Dialog :open="isCreateOpen" @update:open="isCreateOpen = $event">
             <DialogContent class="bg-card border-border text-foreground w-full max-w-md">
@@ -272,11 +364,7 @@ function formatDate(isoString: string | null): string {
                             class="w-full h-10 px-3 rounded-md bg-muted text-foreground border-none text-sm focus:ring-primary focus:ring-1 focus:outline-none"
                         >
                             <option :value="null">Global API Key (Access All Merchants)</option>
-                            <option 
-                                v-for="m in merchants" 
-                                :key="m.id" 
-                                :value="m.id"
-                            >
+                            <option v-for="m in merchants" :key="m.id" :value="m.id">
                                 Merchant: {{ m.name }}
                             </option>
                         </select>

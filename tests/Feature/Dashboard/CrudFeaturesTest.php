@@ -3,7 +3,9 @@
 use App\Models\ApiKey;
 use App\Models\Merchant;
 use App\Models\PaymentGateway;
+use App\Models\PaymentMethod;
 use App\Models\User;
+use App\Services\PaymentGateway\PaymentGatewayManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 
@@ -52,10 +54,12 @@ test('api middleware validates merchant key from api_keys table', function () {
         ], 201),
     ]);
     $merchant = Merchant::factory()->create(['is_active' => true]);
-    $apiKey = ApiKey::create([
+    $plainKey = 'pb_mcht_integration1234567890';
+    ApiKey::create([
         'merchant_id' => $merchant->id,
         'name' => 'Integration Key',
-        'key' => 'pb_mcht_integration1234567890',
+        'key_prefix' => ApiKey::maskToken($plainKey),
+        'key_hash' => ApiKey::hashToken($plainKey),
         'is_active' => true,
     ]);
 
@@ -89,10 +93,12 @@ test('api middleware validates global key with merchant_id payload', function ()
         ], 201),
     ]);
     $merchant = Merchant::factory()->create(['is_active' => true]);
-    $apiKey = ApiKey::create([
+    $plainGlobalKey = 'pb_live_globalmaster987654321';
+    ApiKey::create([
         'merchant_id' => null, // Global Key
         'name' => 'Master Global Key',
-        'key' => 'pb_live_globalmaster987654321',
+        'key_prefix' => ApiKey::maskToken($plainGlobalKey),
+        'key_hash' => ApiKey::hashToken($plainGlobalKey),
         'is_active' => true,
     ]);
 
@@ -121,9 +127,11 @@ test('api middleware validates global key with merchant_id payload', function ()
 
 test('super admin can update api key status and name', function () {
     $user = User::factory()->create();
+    $plainKey = 'pb_live_test123';
     $apiKey = ApiKey::create([
         'name' => 'Test Key',
-        'key' => 'pb_live_test123',
+        'key_prefix' => ApiKey::maskToken($plainKey),
+        'key_hash' => ApiKey::hashToken($plainKey),
         'is_active' => true,
     ]);
 
@@ -136,4 +144,62 @@ test('super admin can update api key status and name', function () {
     $apiKey->refresh();
     expect($apiKey->name)->toBe('Updated Key Name');
     expect($apiKey->is_active)->toBeFalse();
+});
+
+test('super admin can update payment gateway and method using restful put routes', function (): void {
+    $user = User::factory()->create();
+    $gateway = PaymentGateway::factory()->create([
+        'name' => 'Midtrans Old',
+        'code' => 'midtrans',
+        'is_active' => true,
+    ]);
+    $method = PaymentMethod::factory()->for($gateway, 'gateway')->create([
+        'name' => 'BCA VA Old',
+        'code' => 'bca_va',
+    ]);
+
+    $this->actingAs($user)->put(route('payment-gateways.update', $gateway), [
+        'name' => 'Midtrans Updated',
+        'is_active' => false,
+        'credentials' => [
+            'merchant_id' => 'G999999',
+            'client_key' => 'SB-client-key',
+            'server_key' => 'SB-server-key',
+            'is_production' => false,
+        ],
+    ])->assertRedirect();
+
+    $gateway->refresh();
+    expect($gateway->name)->toBe('Midtrans Updated');
+    expect($gateway->is_active)->toBeFalse();
+
+    $this->actingAs($user)->put(route('payment-gateways.methods.update', $method), [
+        'name' => 'BCA VA Updated',
+        'fee_type' => 'fix',
+        'fee_fix' => 5000,
+        'fee_percent' => 0,
+        'is_active' => true,
+    ])->assertRedirect();
+
+    $method->refresh();
+    expect($method->name)->toBe('BCA VA Updated');
+    expect((float) $method->fee_fix)->toBe(5000.0);
+});
+
+test('payment gateway manager caches driver instances per gateway and credentials', function (): void {
+    $manager = app(PaymentGatewayManager::class);
+    $manager->clearResolvedDrivers();
+
+    $gateway = PaymentGateway::factory()->create([
+        'code' => 'midtrans',
+        'credentials' => ['server_key' => 'k1'],
+    ]);
+
+    $first = $manager->driver($gateway);
+    $second = $manager->driver($gateway);
+    expect($first)->toBe($second);
+
+    $gateway->credentials = ['server_key' => 'k2'];
+    $third = $manager->driver($gateway);
+    expect($third)->not->toBe($first);
 });

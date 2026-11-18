@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\v1;
 
+use App\Exceptions\InvalidWebhookSignatureException;
 use App\Http\Controllers\Controller;
 use App\Jobs\SendMerchantCallbackJob;
 use App\Models\Transaction;
@@ -23,8 +26,8 @@ class WebhookController extends Controller
      */
     public function midtrans(Request $request): JsonResponse
     {
-        return $this->processWebhook($request, 'midtrans', function (array $payload) {
-            return $payload['order_id'] ?? null;
+        return $this->processWebhook($request, 'midtrans', function (array $payload): ?string {
+            return isset($payload['order_id']) ? (string) $payload['order_id'] : null;
         });
     }
 
@@ -33,8 +36,8 @@ class WebhookController extends Controller
      */
     public function tokopay(Request $request): JsonResponse
     {
-        return $this->processWebhook($request, 'tokopay', function (array $payload) {
-            return $payload['reff_id'] ?? null;
+        return $this->processWebhook($request, 'tokopay', function (array $payload): ?string {
+            return isset($payload['reff_id']) ? (string) $payload['reff_id'] : null;
         });
     }
 
@@ -43,12 +46,12 @@ class WebhookController extends Controller
      */
     public function xendit(Request $request): JsonResponse
     {
-        return $this->processWebhook($request, 'xendit', function (array $payload) {
-            if (isset($payload['event']) && isset($payload['data'])) {
-                return $payload['data']['reference_id'] ?? null;
+        return $this->processWebhook($request, 'xendit', function (array $payload): ?string {
+            if (isset($payload['event']) && isset($payload['data']) && is_array($payload['data'])) {
+                return isset($payload['data']['reference_id']) ? (string) $payload['data']['reference_id'] : null;
             }
 
-            return $payload['external_id'] ?? null;
+            return isset($payload['external_id']) ? (string) $payload['external_id'] : null;
         });
     }
 
@@ -57,8 +60,8 @@ class WebhookController extends Controller
      */
     public function pakasir(Request $request): JsonResponse
     {
-        return $this->processWebhook($request, 'pakasir', function (array $payload) {
-            return $payload['order_id'] ?? null;
+        return $this->processWebhook($request, 'pakasir', function (array $payload): ?string {
+            return isset($payload['order_id']) ? (string) $payload['order_id'] : null;
         });
     }
 
@@ -67,16 +70,23 @@ class WebhookController extends Controller
      */
     public function ariepulsa(Request $request): JsonResponse
     {
-        return $this->processWebhook($request, 'ariepulsa', function (array $payload) {
-            return $payload['data']['kode_deposit'] ?? null;
+        return $this->processWebhook($request, 'ariepulsa', function (array $payload): ?string {
+            if (isset($payload['data']) && is_array($payload['data']) && isset($payload['data']['kode_deposit'])) {
+                return (string) $payload['data']['kode_deposit'];
+            }
+
+            return null;
         });
     }
 
     /**
      * Core Webhook processing logic.
+     *
+     * @param  callable(array<string, mixed>): ?string  $extractRefId
      */
     protected function processWebhook(Request $request, string $gatewayCode, callable $extractRefId): JsonResponse
     {
+        /** @var array<string, mixed> $payload */
         $payload = $request->json()->all();
 
         // 1. Log the incoming webhook (raw payload)
@@ -122,11 +132,39 @@ class WebhookController extends Controller
             $lockKey = 'webhook_lock_'.$transaction->reference_id;
             $lock = Cache::lock($lockKey, 10);
 
+            if (! $lock->get()) {
+                Log::info('Webhook duplicate received while transaction is already being processed.', [
+                    'transaction_id' => $transaction->id,
+                    'reference_id' => $referenceId,
+                    'gateway' => $gatewayCode,
+                ]);
+
+                $incomingLog->update([
+                    'status_code' => 200,
+                    'notes' => 'Duplicate webhook ignored while transaction lock is active.',
+                ]);
+
+                if ($gatewayCode === 'tokopay') {
+                    return response()->json(['status' => 'true']);
+                }
+
+                return response()->json(['success' => true, 'message' => 'Webhook already being processed.']);
+            }
+
             $shouldDispatchCallback = false;
 
-            $status = $lock->block(5, function () use ($transaction, $payload, $request, &$shouldDispatchCallback) {
-                return DB::transaction(function () use ($transaction, $payload, $request, &$shouldDispatchCallback) {
-                    $transaction->refresh();
+            try {
+                DB::transaction(function () use (&$transaction, $payload, $request, &$shouldDispatchCallback): void {
+                    $lockedTransaction = Transaction::with('paymentMethod.gateway')
+                        ->whereKey($transaction->id)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if (! $lockedTransaction) {
+                        return;
+                    }
+
+                    $transaction = $lockedTransaction;
 
                     $gateway = $transaction->paymentMethod->gateway;
                     $driver = $this->gatewayManager->driver($gateway);
@@ -157,13 +195,9 @@ class WebhookController extends Controller
 
                         $shouldDispatchCallback = true;
                     }
-
-                    return true;
                 });
-            });
-
-            if (! $status) {
-                throw new \Exception('Failed to acquire transaction lock.');
+            } finally {
+                $lock->release();
             }
 
             // Dispatch callback to merchant outside database transaction
@@ -185,21 +219,40 @@ class WebhookController extends Controller
 
             return response()->json(['success' => true]);
 
+        } catch (InvalidWebhookSignatureException $e) {
+            $errorMessage = (string) $e->getMessage();
+
+            Log::warning("Invalid webhook signature for {$gatewayCode}", [
+                'payload' => $payload,
+                'error' => $errorMessage,
+            ]);
+
+            $incomingLog->update([
+                'status_code' => 403,
+                'notes' => 'Signature verification failed: '.$errorMessage,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $errorMessage,
+            ], 403);
         } catch (Throwable $e) {
+            $errorMessage = (string) $e->getMessage();
+
             Log::error("Error processing webhook for {$gatewayCode}", [
                 'payload' => $payload,
-                'error' => $e->getMessage(),
+                'error' => $errorMessage,
                 'trace' => $e->getTraceAsString(),
             ]);
 
             $incomingLog->update([
                 'status_code' => 500,
-                'notes' => 'Webhook processing failed: '.$e->getMessage(),
+                'notes' => 'Webhook processing failed: '.$errorMessage,
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => $errorMessage,
             ], 500);
         }
     }

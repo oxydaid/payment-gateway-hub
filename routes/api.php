@@ -1,19 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Http\Controllers\Api\v1\PaymentController;
 use App\Http\Controllers\Api\v1\WebhookController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
-    // Public webhook endpoints for payment gateways
-    Route::post('/webhooks/midtrans', [WebhookController::class, 'midtrans'])->name('webhooks.midtrans');
-    Route::post('/webhooks/tokopay', [WebhookController::class, 'tokopay'])->name('webhooks.tokopay');
-    Route::post('/webhooks/xendit', [WebhookController::class, 'xendit'])->name('webhooks.xendit');
-    Route::post('/webhooks/pakasir', [WebhookController::class, 'pakasir'])->name('webhooks.pakasir');
-    Route::post('/webhooks/ariepulsa', [WebhookController::class, 'ariepulsa'])->name('webhooks.ariepulsa');
+    // Public webhook endpoints for payment gateways (rate limited to prevent abuse/DDoS)
+    Route::middleware('throttle:120,1')->group(function (): void {
+        Route::post('/webhooks/midtrans', [WebhookController::class, 'midtrans'])->name('webhooks.midtrans');
+        Route::post('/webhooks/tokopay', [WebhookController::class, 'tokopay'])->name('webhooks.tokopay');
+        Route::post('/webhooks/xendit', [WebhookController::class, 'xendit'])->name('webhooks.xendit');
+        Route::post('/webhooks/pakasir', [WebhookController::class, 'pakasir'])->name('webhooks.pakasir');
+        Route::post('/webhooks/ariepulsa', [WebhookController::class, 'ariepulsa'])->name('webhooks.ariepulsa');
+    });
 
-    // Merchant API endpoints protected by api_key token validation middleware
-    Route::middleware('merchant.auth')->group(function (): void {
+    // Merchant API endpoints protected by api_key token validation middleware and strict throttling
+    Route::middleware(['merchant.auth', 'throttle:60,1'])->group(function (): void {
         Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
         Route::get('/payment-methods', [PaymentController::class, 'methods'])->name('payments.methods');
         Route::get('/transactions', [PaymentController::class, 'transactions'])->name('payments.transactions');

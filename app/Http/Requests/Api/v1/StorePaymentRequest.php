@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\v1;
 
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -24,11 +26,11 @@ class StorePaymentRequest extends FormRequest
     public function rules(): array
     {
         $merchant = $this->attributes->get('merchant');
-        $isGlobalKey = $this->attributes->get('is_global_key');
+        $isGlobalKey = (bool) $this->attributes->get('is_global_key');
 
         return [
             'merchant_id' => [
-                Rule::requiredIf(fn () => $isGlobalKey && ! $merchant),
+                Rule::requiredIf(fn (): bool => $isGlobalKey && ! $merchant),
                 'integer',
                 Rule::exists('merchants', 'id')->where(fn ($query) => $query->where('is_active', true)),
             ],
@@ -36,11 +38,6 @@ class StorePaymentRequest extends FormRequest
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('transactions')->where(function ($query) use ($merchant) {
-                    $mId = $merchant?->id ?? $this->input('merchant_id');
-
-                    return $query->where('merchant_id', $mId);
-                }),
             ],
             'payment_method_id' => [
                 'required',

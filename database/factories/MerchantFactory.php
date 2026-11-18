@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Factories;
 
 use App\Models\Merchant;
@@ -19,8 +21,9 @@ class MerchantFactory extends Factory
     {
         return [
             'name' => fake()->company(),
-            'webhook_url' => fake()->url(),
+            'webhook_url' => 'https://merchant.example.com/webhook',
             'api_key' => 'pb_mcht_'.fake()->regexify('[A-Za-z0-9]{32}'),
+            'webhook_secret' => 'whsec_'.fake()->regexify('[A-Za-z0-9]{32}'),
             'is_active' => true,
         ];
     }

@@ -47,16 +47,33 @@ return [
         /*
          * API version.
          */
-        'version' => env('API_VERSION', '0.0.1'),
+        'version' => env('API_VERSION', '1.0.0'),
 
         /*
          * Description rendered on the home page of the API documentation (`/docs/api`).
          */
-        'description' => '',
+        'description' => <<<'MD'
+Unified Payment Gateway Hub & Webhook Router API.
+
+### Authentication
+Merchant endpoints require a Bearer token in the `Authorization` header (`pb_mcht_*` for merchant-scoped keys or `pb_live_*` for global keys). API keys are stored hashed with SHA-256.
+
+### Idempotency
+`POST /api/v1/payments` supports an optional `Idempotency-Key` header as well as `(merchant_id, merchant_ref_id)` deduplication:
+- Replaying a request with matching `amount` and `payment_method_id` returns **`200 OK`** with `"idempotent": true`.
+- Reusing a key or reference with conflicting parameters returns **`409 Conflict`**.
+
+### Rate Limits
+- **Merchant API (`/api/v1/*`):** `60 requests / minute`
+- **Upstream Webhooks (`/api/v1/webhooks/*`):** `120 requests / minute`
+
+### Dynamic QRIS Images
+When a payment method returns a raw EMVCo QRIS string (`000201...`), `payment_code` contains the raw string and `qris_url` immediately resolves to the Hub's on-the-fly QR renderer (`/payments/qris/{reference_id}.png` or `.svg`).
+MD,
     ],
 
     'ui' => [
-        'title' => null,
+        'title' => 'Payment Bridge API Documentation',
     ],
 
     'renderer' => 'scalar',

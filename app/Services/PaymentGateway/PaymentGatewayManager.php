@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\PaymentGateway;
 
 use App\Models\PaymentGateway;
@@ -24,6 +26,13 @@ class PaymentGatewayManager
         'pakasir' => PakasirDriver::class,
         'ariepulsa' => AriepulsaDriver::class,
     ];
+
+    /**
+     * Cached driver instances keyed by gateway id, code, and credentials fingerprint.
+     *
+     * @var array<string, GatewayDriverInterface>
+     */
+    protected array $resolvedDrivers = [];
 
     /**
      * Get array of supported driver codes.
@@ -52,7 +61,7 @@ class PaymentGatewayManager
     }
 
     /**
-     * Instantiate a driver for a given PaymentGateway instance.
+     * Instantiate or retrieve a cached driver for a given PaymentGateway instance.
      */
     public function driver(PaymentGateway $gateway): GatewayDriverInterface
     {
@@ -62,9 +71,24 @@ class PaymentGatewayManager
             throw new InvalidArgumentException("Unsupported gateway driver: {$code}");
         }
 
-        $driverClass = $this->drivers[$code];
+        $credentials = $gateway->credentials ?? [];
+        $encodedCredentials = json_encode($credentials);
+        $cacheKey = $gateway->id.':'.$code.':'.hash('sha256', $encodedCredentials !== false ? $encodedCredentials : '');
 
-        return new $driverClass($gateway->credentials ?? []);
+        if (! isset($this->resolvedDrivers[$cacheKey])) {
+            $driverClass = $this->drivers[$code];
+            $this->resolvedDrivers[$cacheKey] = new $driverClass($credentials);
+        }
+
+        return $this->resolvedDrivers[$cacheKey];
+    }
+
+    /**
+     * Clear cached driver instances.
+     */
+    public function clearResolvedDrivers(): void
+    {
+        $this->resolvedDrivers = [];
     }
 
     /**

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\v1;
 
 use App\Http\Controllers\Controller;
@@ -12,13 +14,12 @@ use App\Models\PaymentMethod;
 use App\Models\Transaction;
 use App\Models\WebhookLog;
 use App\Services\PaymentGateway\PaymentGatewayManager;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -49,7 +50,7 @@ class PaymentController extends Controller
         $perPage = (int) $request->query('per_page', 15);
 
         $query = Transaction::with('paymentMethod.gateway');
-        if ($merchant) {
+        if ($merchant instanceof Merchant) {
             $query->where('merchant_id', $merchant->id);
         }
 
@@ -75,11 +76,11 @@ class PaymentController extends Controller
         $merchant = $request->attributes->get('merchant');
 
         $query = Transaction::with('paymentMethod.gateway');
-        if ($merchant) {
+        if ($merchant instanceof Merchant) {
             $query->where('merchant_id', $merchant->id);
         }
 
-        $transaction = $query->where(function ($query) use ($referenceId) {
+        $transaction = $query->where(function ($query) use ($referenceId): void {
             $query->where('reference_id', $referenceId)
                 ->orWhere('merchant_ref_id', $referenceId);
         })->first();
@@ -105,8 +106,8 @@ class PaymentController extends Controller
         $perPage = (int) $request->query('per_page', 15);
 
         $query = WebhookLog::with('transaction');
-        if ($merchant) {
-            $query->whereHas('transaction', function ($query) use ($merchant) {
+        if ($merchant instanceof Merchant) {
+            $query->whereHas('transaction', function ($query) use ($merchant): void {
                 $query->where('merchant_id', $merchant->id);
             });
         }
@@ -131,11 +132,31 @@ class PaymentController extends Controller
     public function store(StorePaymentRequest $request): JsonResponse
     {
         $merchant = $request->attributes->get('merchant');
-        if (! $merchant && $request->has('merchant_id')) {
-            $merchant = Merchant::find($request->merchant_id);
+        if (! $merchant instanceof Merchant && $request->has('merchant_id')) {
+            $merchant = Merchant::find($request->input('merchant_id'));
         }
-        $amount = (float) $request->amount;
-        $paymentMethod = PaymentMethod::with('gateway')->find($request->payment_method_id);
+
+        if (! $merchant instanceof Merchant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Merchant context could not be resolved.',
+            ], 422);
+        }
+
+        $amount = (float) $request->input('amount');
+        $merchantRefId = (string) $request->input('merchant_ref_id');
+        $paymentMethod = PaymentMethod::with('gateway')->findOrFail($request->input('payment_method_id'));
+
+        $rawIdempotencyKey = $request->header('Idempotency-Key');
+        $idempotencyKey = is_string($rawIdempotencyKey) && trim($rawIdempotencyKey) !== ''
+            ? substr(trim($rawIdempotencyKey), 0, 128)
+            : null;
+
+        // Check for existing transaction by Idempotency-Key or (merchant_id, merchant_ref_id)
+        $existingTransaction = $this->findExistingTransaction($merchant->id, $merchantRefId, $idempotencyKey);
+        if ($existingTransaction !== null) {
+            return $this->buildIdempotentResponse($existingTransaction, $amount, $paymentMethod->id);
+        }
 
         // Calculate Fee based on fee_type
         $fee = 0.0;
@@ -153,6 +174,7 @@ class PaymentController extends Controller
         $totalAmount = $amount + $fee;
         $referenceId = (string) Str::uuid();
         $expiredAt = now()->addHours(24);
+        $rawQris = null;
 
         DB::beginTransaction();
 
@@ -161,7 +183,8 @@ class PaymentController extends Controller
             $transaction = Transaction::create([
                 'reference_id' => $referenceId,
                 'merchant_id' => $merchant->id,
-                'merchant_ref_id' => $request->merchant_ref_id,
+                'merchant_ref_id' => $merchantRefId,
+                'idempotency_key' => $idempotencyKey,
                 'payment_method_id' => $paymentMethod->id,
                 'amount' => $amount,
                 'fee' => $fee,
@@ -169,7 +192,7 @@ class PaymentController extends Controller
                 'status' => 'PENDING',
                 'pg_status' => 'PENDING',
                 'expired_at' => $expiredAt,
-                'redirect_url' => $request->redirect_url,
+                'redirect_url' => (string) $request->input('redirect_url'),
             ]);
 
             // 2. Call resolved gateway driver
@@ -182,17 +205,19 @@ class PaymentController extends Controller
             $paymentCode = $gatewayResponse->paymentCode;
             $qrisUrl = $gatewayResponse->qrisUrl;
 
-            // Detect raw QRIS string and convert to stored local image
-            $rawQris = null;
+            // Detect raw QRIS EMV string and serve it dynamically via Hub's own QRIS image endpoint
             if ($qrisUrl && (str_starts_with($qrisUrl, '000201') || ! filter_var($qrisUrl, FILTER_VALIDATE_URL))) {
                 $rawQris = $qrisUrl;
             } elseif ($paymentCode && str_starts_with($paymentCode, '000201')) {
                 $rawQris = $paymentCode;
             }
 
-            if ($rawQris) {
+            if ($rawQris !== null) {
                 $paymentCode = $rawQris;
-                $qrisUrl = $this->generateQrisImage($rawQris, $transaction->reference_id);
+                $qrisUrl = route('payments.qris', [
+                    'reference_id' => $transaction->reference_id,
+                    'format' => 'png',
+                ]);
             }
 
             // 3. Update transaction with PG details
@@ -214,12 +239,24 @@ class PaymentController extends Controller
                 ->response()
                 ->setStatusCode(201);
 
+        } catch (UniqueConstraintViolationException) {
+            DB::rollBack();
+
+            $concurrentTx = $this->findExistingTransaction($merchant->id, $merchantRefId, $idempotencyKey);
+            if ($concurrentTx !== null) {
+                return $this->buildIdempotentResponse($concurrentTx, $amount, $paymentMethod->id);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Duplicate transaction reference detected.',
+            ], 409);
         } catch (Throwable $e) {
             DB::rollBack();
 
             Log::error('Failed to create payment transaction', [
                 'merchant_id' => $merchant->id,
-                'merchant_ref_id' => $request->merchant_ref_id,
+                'merchant_ref_id' => $merchantRefId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -232,29 +269,41 @@ class PaymentController extends Controller
     }
 
     /**
-     * Generate local QRIS image and store it on public disk.
+     * Find an existing transaction matching either the idempotency key or merchant reference ID.
      */
-    protected function generateQrisImage(string $qrContent, string $referenceId): ?string
+    protected function findExistingTransaction(int $merchantId, string $merchantRefId, ?string $idempotencyKey): ?Transaction
     {
-        try {
-            $response = Http::get('https://api.qrserver.com/v1/create-qr-code/', [
-                'size' => '300x300',
-                'data' => $qrContent,
-            ]);
+        return Transaction::where('merchant_id', $merchantId)
+            ->where(function ($query) use ($merchantRefId, $idempotencyKey): void {
+                $query->where('merchant_ref_id', $merchantRefId);
+                if ($idempotencyKey !== null) {
+                    $query->orWhere('idempotency_key', $idempotencyKey);
+                }
+            })
+            ->first();
+    }
 
-            if ($response->successful()) {
-                $fileName = 'qris-'.$referenceId.'.png';
-                Storage::disk('public')->put('qris/'.$fileName, $response->body());
+    /**
+     * Return 200 OK for a matching idempotent replay, or 409 Conflict if parameters diverge.
+     */
+    protected function buildIdempotentResponse(Transaction $existingTransaction, float $amount, int $paymentMethodId): JsonResponse
+    {
+        $amountMatches = abs((float) $existingTransaction->amount - $amount) < 0.001;
+        $methodMatches = (int) $existingTransaction->payment_method_id === $paymentMethodId;
 
-                return asset('storage/qris/'.$fileName);
-            }
-        } catch (Throwable $e) {
-            Log::error('Failed to generate local QRIS image', [
-                'error' => $e->getMessage(),
-                'qr_content' => $qrContent,
-            ]);
+        if (! $amountMatches || ! $methodMatches) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Idempotency conflict: transaction reference or Idempotency-Key was already used with different payment parameters.',
+            ], 409);
         }
 
-        return null;
+        return (new TransactionResource($existingTransaction->load('paymentMethod.gateway')))
+            ->additional([
+                'success' => true,
+                'idempotent' => true,
+            ])
+            ->response()
+            ->setStatusCode(200);
     }
 }

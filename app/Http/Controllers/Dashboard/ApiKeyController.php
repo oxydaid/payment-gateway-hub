@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
@@ -15,15 +17,15 @@ class ApiKeyController extends Controller
 {
     public function index(): Response
     {
-        $apiKeys = ApiKey::with('merchant')->latest()->get()->map(function ($key) {
+        $apiKeys = ApiKey::with('merchant')->latest()->get()->map(function (ApiKey $key): array {
             return [
                 'id' => $key->id,
                 'name' => $key->name,
-                'key' => $key->key,
+                'key_prefix' => $key->key_prefix ?? 'pb_****',
                 'is_active' => $key->is_active,
                 'merchant_name' => $key->merchant->name ?? 'Global (All Merchants)',
-                'last_used_at' => $key->last_used_at ? $key->last_used_at->toIso8601String() : null,
-                'created_at' => $key->created_at->toIso8601String(),
+                'last_used_at' => $key->last_used_at?->toIso8601String(),
+                'created_at' => $key->created_at?->toIso8601String(),
             ];
         });
 
@@ -44,16 +46,20 @@ class ApiKeyController extends Controller
 
         // Global keys start with pb_live_, merchant keys with pb_mcht_
         $prefix = empty($validated['merchant_id']) ? 'pb_live_' : 'pb_mcht_';
-        $key = $prefix.Str::random(40);
+        $plainToken = $prefix.Str::random(40);
 
         ApiKey::create([
             'name' => $validated['name'],
             'merchant_id' => $validated['merchant_id'],
-            'key' => $key,
+            'key_prefix' => ApiKey::maskToken($plainToken),
+            'key_hash' => ApiKey::hashToken($plainToken),
             'is_active' => true,
         ]);
 
-        return Inertia::flash('success', 'API Key generated successfully.')->back();
+        return Inertia::flash([
+            'success' => 'API Key generated successfully. Save this token now — it will not be shown again.',
+            'new_api_key' => $plainToken,
+        ])->back();
     }
 
     public function update(Request $request, ApiKey $apiKey): RedirectResponse

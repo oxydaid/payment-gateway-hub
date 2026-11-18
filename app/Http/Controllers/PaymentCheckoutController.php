@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use App\Models\Transaction;
@@ -27,6 +29,14 @@ class PaymentCheckoutController extends Controller
             $methodIcon = $method->icon ? asset('storage/'.$method->icon) : $this->getMethodIcon($method->name);
         }
 
+        $qrisUrl = $transaction->qris_url;
+        if (empty($qrisUrl) && ! empty($transaction->payment_code) && str_starts_with($transaction->payment_code, '000201')) {
+            $qrisUrl = route('payments.qris', [
+                'reference_id' => $transaction->reference_id,
+                'format' => 'png',
+            ]);
+        }
+
         return Inertia::render('Payments/Checkout', [
             'transaction' => [
                 'reference_id' => $transaction->reference_id,
@@ -37,7 +47,7 @@ class PaymentCheckoutController extends Controller
                 'total_amount' => (float) $transaction->total_amount,
                 'status' => $transaction->status,
                 'checkout_url' => $transaction->checkout_url,
-                'qris_url' => $transaction->qris_url,
+                'qris_url' => $qrisUrl,
                 'payment_code' => $transaction->payment_code,
                 'redirect_url' => $transaction->redirect_url,
                 'expired_at' => $transaction->expired_at?->toIso8601String(),

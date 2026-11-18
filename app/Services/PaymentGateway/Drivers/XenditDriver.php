@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\PaymentGateway\Drivers;
 
+use App\Exceptions\InvalidWebhookSignatureException;
 use App\Models\Transaction;
 use App\Services\PaymentGateway\GatewayDriverInterface;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
@@ -140,13 +143,13 @@ class XenditDriver implements GatewayDriverInterface
      */
     public function handleWebhook(array $payload, array $headers = []): GatewayStatusResponse
     {
-        if ($this->callbackToken) {
+        if ($this->callbackToken !== '') {
             $incomingToken = $headers['x-callback-token'] ?? null;
             if (is_array($incomingToken)) {
                 $incomingToken = $incomingToken[0] ?? null;
             }
-            if ($incomingToken !== $this->callbackToken) {
-                throw new \Exception('Xendit callback token verification failed.');
+            if (! is_string($incomingToken) || ! hash_equals($this->callbackToken, $incomingToken)) {
+                throw new InvalidWebhookSignatureException('Xendit callback token verification failed.');
             }
         }
 

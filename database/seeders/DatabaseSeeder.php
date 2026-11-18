@@ -43,11 +43,13 @@ class DatabaseSeeder extends Seeder
         );
 
         // Link default API key
+        $demoKey = 'pb_mcht_demo1234567890';
         ApiKey::updateOrCreate(
-            ['key' => 'pb_mcht_demo1234567890'],
+            ['key_hash' => ApiKey::hashToken($demoKey)],
             [
                 'merchant_id' => $merchant->id,
                 'name' => 'Demo Default Key',
+                'key_prefix' => ApiKey::maskToken($demoKey),
                 'is_active' => true,
             ]
         );

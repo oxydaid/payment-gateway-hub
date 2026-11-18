@@ -4,54 +4,61 @@
 [![PHP Version](https://img.shields.io/badge/php-8.4-blue.svg)](https://php.net)
 [![Inertia.js](https://img.shields.io/badge/inertia-v3-purple.svg)](https://inertiajs.com)
 [![TailwindCSS](https://img.shields.io/badge/tailwind-v4-blueviolet.svg)](https://tailwindcss.com)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Payment Bridge** adalah platform router/aggregator pembayaran terpadu berbasis **Laravel 13**, **Inertia.js v3 (Vue 3)**, dan **Tailwind CSS v4**. Sistem ini bertindak sebagai jembatan tunggal (bridge) yang menghubungkan aplikasi/merchant Anda dengan berbagai penyedia payment gateway melalui satu integrasi API terpadu.
+**Payment Bridge** adalah platform router/aggregator pembayaran terpadu berbasis **Laravel 13**, **Inertia.js v3 (Vue 3)**, dan **Tailwind CSS v4**. Sistem ini bertindak sebagai jembatan tunggal (*hub*) yang menghubungkan berbagai aplikasi/merchant Anda ke beragam penyedia payment gateway melalui satu kontrak REST API dan sistem webhook routing yang aman, idempoten, dan asinkron.
 
 ---
 
 ## ✨ Fitur Utama
 
 ### 🌓 Spotify-Inspired Admin Dashboard
-* Desain UI premium, adaptif terhadap mode Terang (Light) dan Gelap (Dark).
-* Kustomisasi logo, favicon, nama aplikasi, dan warna primer/sekunder yang langsung disinkronkan ke css variable di frontend secara real-time.
+* UI adaptif untuk mode Terang (*Light*) dan Gelap (*Dark*) dengan branding dinamis (`app_name`, logo, favicon, warna primer/sekunder).
+* KPI ter-cache di Redis serta loading grafik 30 hari & transaksi terbaru berbasis **Inertia v3 Deferred Props** (`<Deferred>` + skeleton) untuk navigasi instan.
 
 ### 🔌 Multi-Driver Payment Gateway Support
-Terintegrasi langsung dengan berbagai Payment Gateway terkemuka di Indonesia:
-1. **Midtrans** 
-2. **Xendit** 
-3. **Tripay**  *(Catatan: Dihapus dari basis kode karena Tripay secara native telah mendukung multi-merchant sehingga tidak memerlukan router/bridge tambahan).*
-4. **Tokopay** (Sandbox & Production)
-5. **Pakasir** 
+Terintegrasi melalui pola Strategy/Adapter (`GatewayDriverInterface`) dengan in-memory driver caching:
+1. **Midtrans** (Snap — Sandbox & Production)
+2. **Xendit** (v3 Payment Requests)
+3. **Tokopay** (VA, QRIS, E-Wallet, Retail)
+4. **Pakasir** (QRIS & Virtual Account)
+5. **Ariepulsa** (QRIS Standard, QRIS GO, QRIS Realtime)
 
-### 💎 Saluran Pembayaran & Auto-Icon Cerdas
-* **Dropdown Dinamis:** Pilihan metode pembayaran pada admin panel otomatis mengambil data asli yang didukung oleh masing-masing driver/gateway, mencegah typo.
-* **Auto-Icon Mapping:** Ikon metode pembayaran otomatis ter-resolve berdasarkan kecocokan nama file di `public/images/payment-method/`.
+*(Catatan: Tripay dihapus karena secara native sudah mendukung multi-merchant).*
 
-### 🛍️ Premium Public Checkout Page
-* Menyediakan halaman instruksi pembayaran siap pakai untuk pembeli.
-* **QRIS Cache:** Mendownload QRIS string dari gateway, menyimpannya di server bridge sebagai gambar lokal, dan menyajikannya kepada pembeli.
-* **VA Copy:** Fitur salin nomor Virtual Account sekali klik.
-* **Real-time Polling:** Sistem otomatis mem-polling status pembayaran setiap 3 detik ketika berstatus `PENDING`.
-* **Auto-Redirect:** Menampilkan hitung mundur 5 detik dan otomatis mengalihkan pembeli ke `redirect_url` merchant begitu transaksi berstatus `PAID` / `DONE`.
+### 🛍️ Public Checkout & Dynamic On-The-Fly QRIS Rendering
+* **Dynamic Local QRIS (`/payments/qris/{reference_id}.{png|svg}`):** Merender gambar QRIS secara lokal (on-the-fly) menggunakan `chillerlan/php-qrcode` langsung dari raw EMVCo `payment_code` (`000201...`) — **tanpa API pihak ketiga** dan **tanpa menyimpan file gambar di disk**, lengkap dengan header `Cache-Control: public, max-age=86400, immutable`.
+* **VA Copy & Real-time Polling:** Salin nomor VA sekali klik, polling status otomatis tiap 3 detik saat `PENDING`, dan auto-redirect 5 detik saat status `PAID` / `DONE`.
 
-### 🔑 Token & API Key Bertingkat
-* **Global API Key:** Mengizinkan integrasi semua merchant dalam satu token master (cocok untuk platform SaaS).
-* **Merchant API Key:** Mengunci token hanya untuk akses transaksi milik merchant yang bersangkutan.
+### 🔐 Keamanan & Reliabilitas Tingkat Produksi
+* **Hashed API Keys (SHA-256):** Token Global (`pb_live_*`) & Merchant (`pb_mcht_*`) disimpan sebagai hash SHA-256 (`key_hash`) dan hanya ditampilkan sekali melalui modal saat pembuatan.
+* **Encrypted Credentials & Webhook Secret:** Kredensial upstream disimpan terenkripsi (`encrypted:array`), dan callback outbound ditandatangani dengan `X-Bridge-Signature` (HMAC-SHA256) memakai kolom terenkripsi `merchants.webhook_secret` (`whsec_*`).
+* **Idempotency Transaksi:** `POST /api/v1/payments` mendukung header `Idempotency-Key` dan deduplikasi `(merchant_id, merchant_ref_id)` → mengembalikan `200 OK` (`idempotent: true`) untuk retry identik, atau `409 Conflict` jika parameter nominal/metode berbeda.
+* **Anti-Race Condition Webhook:** Distributed cache lock (Redis) + `DB::transaction()` dengan `lockForUpdate()`, serta respons `200 OK` idempoten saat duplikat webhook datang bersamaan dan `403 Forbidden` untuk signature tidak valid (`hash_equals()`).
+* **Rate Limiting & SSRF Protection:** Throttle aktif di Merchant API (`60/menit`), Upstream Webhooks & QRIS (`120/menit`), dan Login (`10/menit`), serta validasi SSRF yang memblokir URL webhook ke loopback/private/link-local IP (IPv4 & IPv6).
 
-### 🔄 Dynamic Callback Workers (Sync / Async Queue)
-* Dapat dikonfigurasi melalui `.env` (`MERCHANT_CALLBACK_SYNC=true/false`).
-* Mendukung pengiriman callback instan (synchronous dispatch) maupun antrean background queue (database queue) untuk memastikan callback sukses tersampaikan ke merchant dengan logging response detail.
+### 🔄 Asynchronous Callback Engine & Reconciler
+* Default `MERCHANT_CALLBACK_SYNC=false` mengirim callback secara asinkron lewat Queue Worker (`after_commit: true`) dengan **5x retry exponential backoff** (`10s → 60s → 300s → 1800s → 3600s`).
+* Command terjadwal `php artisan app:reconcile-transactions` berjalan tiap 5 menit menggunakan `chunkById(100)` untuk merekonsiliasi transaksi `PENDING` dan menandai transaksi kedaluwarsa (`EXPIRED`).
 
 ---
 
-## 📂 Struktur Direktori Konfigurasi Deployment
+## 📚 Dokumentasi API & Webhook Terintegrasi
 
-Kami menyediakan berkas konfigurasi siap pakai di dalam folder `deploy/` & root untuk mempercepat proses deployment:
-* **Docker:** [Dockerfile](Dockerfile) (multi-stage build pnpm + php-fpm) & [docker-compose.yml](docker-compose.yml) (app, web, db, redis, queue-worker, scheduler).
-* **Coolify / Nixpacks:** [nixpacks.toml](nixpacks.toml) untuk deteksi container builder otomatis.
-* **VPS Native:** [deploy/vps/nginx.conf](deploy/vps/nginx.conf) (Server Block SSL) & [deploy/vps/supervisor.conf](deploy/vps/supervisor.conf) (Supervisor queue worker daemon).
-* **cPanel:** [deploy/cpanel/htaccess](deploy/cpanel/htaccess) (URL rewrites) & [deploy/cpanel/cron_job.txt](deploy/cpanel/cron_job.txt) (Laravel scheduler cron).
+Setelah aplikasi berjalan, tersedia dua dokumentasi interaktif bawaan:
+* **OpenAPI / Scalar API Reference:** `GET /docs/api` (dihasilkan otomatis oleh `dedoc/scramble` dari kode aplikasi).
+* **Merchant Webhook Manual:** `GET /docs/webhook` (panduan skema payload, verifikasi HMAC-SHA256, aturan SSRF, serta contoh kode PHP, Node.js, dan Python).
+
+---
+
+## 📂 Konfigurasi Deployment
+
+Tersedia konfigurasi siap pakai di root & folder `deploy/`:
+* **Docker:** [Dockerfile](Dockerfile) & [docker-compose.yml](docker-compose.yml) (`app`, `web`, `db`, `redis`, `queue-worker`, `scheduler`).
+* **Coolify / Nixpacks:** [nixpacks.toml](nixpacks.toml).
+* **VPS Native:** [deploy/vps/nginx.conf](deploy/vps/nginx.conf) & [deploy/vps/supervisor.conf](deploy/vps/supervisor.conf).
+* **cPanel:** [deploy/cpanel/htaccess](deploy/cpanel/htaccess) & [deploy/cpanel/cron_job.txt](deploy/cpanel/cron_job.txt).
+* Panduan lengkap tersedia di [deploy/DEPLOYMENT.md](deploy/DEPLOYMENT.md).
 
 ---
 
@@ -66,7 +73,7 @@ pnpm install
 ```
 
 ### 2. Konfigurasi Environment File
-Salin file `.env.example` menjadi `.env`, lalu lakukan konfigurasi database dan queue driver:
+Salin `.env.example` menjadi `.env`, atur koneksi MariaDB/MySQL & Redis (`CACHE_STORE=redis`, `SESSION_DRIVER=redis`, `MERCHANT_CALLBACK_SYNC=false`), lalu generate app key:
 ```bash
 cp .env.example .env
 php artisan key:generate
@@ -77,16 +84,18 @@ php artisan key:generate
 php artisan migrate --force --seed
 ```
 *Akun administrator default:*
-* **Email**: `admin@example.com`
-* **Password**: `password`
+* **Email:** `admin@example.com`
+* **Password:** `password`
 
-### 4. Jalankan Aplikasi Secara Lokal
-Jalankan server backend Laravel:
+### 4. Jalankan Aplikasi, Queue Worker & Frontend
 ```bash
+# Terminal 1 — Laravel HTTP Server
 php artisan serve
-```
-Dan jalankan Vite dev server di terminal terpisah:
-```bash
+
+# Terminal 2 — Queue Worker (wajib jika MERCHANT_CALLBACK_SYNC=false)
+php artisan queue:work
+
+# Terminal 3 — Vite Dev Server (atau jalankan `pnpm build` untuk produksi)
 pnpm run dev
 ```
 
@@ -94,10 +103,12 @@ pnpm run dev
 
 ## 🛰️ Contoh Integrasi API (Merchant)
 
-### 1. Membuat Pembayaran (POST `/api/v1/payments`)
+### 1. Membuat Pembayaran (`POST /api/v1/payments`)
+
 **Headers:**
 ```text
 Authorization: Bearer pb_mcht_your_api_key_here
+Idempotency-Key: order-2026-0001
 Content-Type: application/json
 Accept: application/json
 ```
@@ -106,33 +117,70 @@ Accept: application/json
 ```json
 {
   "merchant_ref_id": "INV-2026-0001",
-  "payment_method_id": 5,
+  "payment_method_id": 1,
   "amount": 150000,
   "redirect_url": "https://tokomu.com/checkout/success"
 }
 ```
 
-**Response Success (201):**
+**Response Success (`201 Created`):**
 ```json
 {
   "success": true,
-  "message": "Payment created successfully.",
   "data": {
-    "reference_id": "tx_202607231345_abcde",
+    "reference_id": "8a987e4e-3cd1-4777-b9ba-66537bef28cb",
     "merchant_ref_id": "INV-2026-0001",
+    "payment_method": {
+      "id": 1,
+      "name": "QRIS (Pakasir)",
+      "code": "qris",
+      "type": "qris",
+      "fee_type": "percent",
+      "fee_fix": 0,
+      "fee_percent": 0.7,
+      "icon_url": null,
+      "gateway_code": "pakasir",
+      "is_active": true
+    },
     "amount": 150000,
-    "fee": 4500,
-    "total_amount": 154500,
+    "fee": 1050,
+    "total_amount": 151050,
     "status": "PENDING",
-    "checkout_url": "http://localhost:8000/payments/checkout/tx_202607231345_abcde",
-    "redirect_url": "https://tokomu.com/checkout/success"
+    "pg_status": "PENDING",
+    "checkout_url": "https://app.pakasir.com/pay/demo/151050?order_id=8a987e4e-3cd1-4777-b9ba-66537bef28cb",
+    "qris_url": "http://localhost:8000/payments/qris/8a987e4e-3cd1-4777-b9ba-66537bef28cb.png",
+    "payment_code": "0002010102122661...",
+    "redirect_url": "https://tokomu.com/checkout/success",
+    "pg_ref_id": "8a987e4e-3cd1-4777-b9ba-66537bef28cb",
+    "paid_at": null,
+    "expired_at": "2026-11-19T17:00:00+07:00",
+    "created_at": "2026-11-18T17:00:00+07:00"
   }
 }
+```
+
+> **Catatan Idempotency & QRIS:**
+> * Mengirim ulang request dengan `Idempotency-Key` atau `merchant_ref_id` yang sama beserta `amount` & `payment_method_id` identik akan mengembalikan **`200 OK`** dengan `"idempotent": true` tanpa membuat transaksi ganda ke gateway.
+> * Untuk format vektor SVG, cukup ganti ekstensi `qris_url` dari `.png` menjadi `.svg`.
+
+---
+
+## 🧪 Pengujian & Kualitas Kode
+
+```bash
+# Jalankan seluruh test Pest
+php artisan test --compact
+
+# Validasi OpenAPI Scramble (0 errors, 0 warnings)
+php artisan scramble:analyze --fail-on-empty --fail-on-unknown
+
+# Format kode PHP dengan Laravel Pint
+./vendor/bin/pint --dirty
 ```
 
 ---
 
 ## 🛡️ Lisensi & Kontribusi
-* 📄 **Lisensi**: Proyek ini dilisensikan di bawah lisensi MIT.
-* ⛔ **PENTING**: Proyek ini **100% GRATIS** untuk digunakan. **Dilarang keras memperjualbelikan** software ini atau turunannya dalam bentuk komersial apa pun!
-* 🤝 **Kontribusi**: Silakan buka Pull Request (PR) atau Issue jika menemukan bug atau ingin menambahkan driver gateway baru.
+* 📄 **Lisensi:** Proyek ini dilisensikan di bawah lisensi MIT.
+* ⛔ **PENTING:** Proyek ini **100% GRATIS** untuk digunakan. **Dilarang keras memperjualbelikan** software ini atau turunannya dalam bentuk komersial apa pun!
+* 🤝 **Kontribusi:** Baca [CONTRIBUTING.md](CONTRIBUTING.md) sebelum membuka Pull Request (PR) atau Issue.

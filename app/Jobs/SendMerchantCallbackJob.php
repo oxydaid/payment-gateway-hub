@@ -1,9 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Jobs;
 
 use App\Models\Transaction;
 use App\Models\WebhookLog;
+use App\Services\Security\WebhookUrlValidator;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -19,35 +22,35 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
-     * Dispatch the job either synchronously or asynchronously depending on configuration.
-     */
-    public static function dispatchMerchantCallback(Transaction $transaction): void
-    {
-        if (config('queue.merchant_callback_sync', true)) {
-            self::dispatchSync($transaction);
-        } else {
-            self::dispatch($transaction);
-        }
-    }
-
-    /**
      * The number of times the job may be attempted.
      *
      * @var int
      */
-    public $tries = 3;
+    public $tries = 5;
 
     /**
      * The number of seconds to wait before retrying the job.
      *
      * @var array<int, int>
      */
-    public $backoff = [60, 300, 600];
+    public $backoff = [10, 60, 300, 1800, 3600];
 
     /**
      * Create a new job instance.
      */
     public function __construct(public Transaction $transaction) {}
+
+    /**
+     * Dispatch the job either synchronously or asynchronously depending on configuration.
+     */
+    public static function dispatchMerchantCallback(Transaction $transaction): void
+    {
+        if (config('queue.merchant_callback_sync', false)) {
+            self::dispatchSync($transaction);
+        } else {
+            self::dispatch($transaction);
+        }
+    }
 
     /**
      * The unique ID of the job.
@@ -60,13 +63,35 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(): void
+    public function handle(?WebhookUrlValidator $webhookUrlValidator = null): void
     {
+        $webhookUrlValidator ??= app(WebhookUrlValidator::class);
         $merchant = $this->transaction->merchant;
 
         if (! $merchant || empty($merchant->webhook_url)) {
             Log::warning('Skipping callback: Merchant webhook URL not set or merchant not found.', [
                 'transaction_id' => $this->transaction->id,
+            ]);
+
+            return;
+        }
+
+        if (! $webhookUrlValidator->isSafe($merchant->webhook_url)) {
+            Log::warning('Blocked outbound merchant callback due to SSRF protection.', [
+                'transaction_id' => $this->transaction->id,
+                'merchant_id' => $merchant->id,
+                'url' => $merchant->webhook_url,
+            ]);
+
+            WebhookLog::create([
+                'transaction_id' => $this->transaction->id,
+                'direction' => 'outgoing',
+                'payload' => [
+                    'reference_id' => $this->transaction->reference_id,
+                    'status' => $this->transaction->status,
+                ],
+                'status_code' => 400,
+                'notes' => 'Callback blocked by SSRF protection: target URL resolves to a disallowed address.',
             ]);
 
             return;
@@ -87,12 +112,13 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
             'pg_ref_id' => $this->transaction->pg_ref_id,
             'checkout_url' => $this->transaction->checkout_url,
             'qris_url' => $this->transaction->qris_url,
-            'created_at' => $this->transaction->created_at->toIso8601String(),
+            'created_at' => $this->transaction->created_at?->toIso8601String(),
             'paid_at' => $this->transaction->paid_at?->toIso8601String(),
         ];
 
-        // Sign the JSON payload using merchant's api_key
-        $signature = hash_hmac('sha256', json_encode($payload), $merchant->api_key ?? '');
+        $encodedPayload = json_encode($payload);
+        // Sign the JSON payload using merchant's encrypted webhook_secret (or legacy api_key)
+        $signature = hash_hmac('sha256', $encodedPayload !== false ? $encodedPayload : '', $merchant->signingSecret());
 
         try {
             $response = Http::withHeaders([
@@ -107,7 +133,7 @@ class SendMerchantCallbackJob implements ShouldBeUnique, ShouldQueue
             $isSuccessResponse = false;
             if ($response->successful()) {
                 $responseData = $response->json();
-                if (isset($responseData['success']) && ($responseData['success'] === true || $responseData['success'] === 'true')) {
+                if (is_array($responseData) && isset($responseData['success']) && ($responseData['success'] === true || $responseData['success'] === 'true')) {
                     $isSuccessResponse = true;
                 }
             }

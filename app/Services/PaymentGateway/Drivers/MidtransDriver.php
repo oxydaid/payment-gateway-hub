@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\PaymentGateway\Drivers;
 
+use App\Exceptions\InvalidWebhookSignatureException;
 use App\Models\Transaction;
 use App\Services\PaymentGateway\GatewayDriverInterface;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
@@ -117,15 +120,15 @@ class MidtransDriver implements GatewayDriverInterface
      */
     public function handleWebhook(array $payload, array $headers = []): GatewayStatusResponse
     {
-        $orderId = $payload['order_id'] ?? '';
-        $statusCode = $payload['status_code'] ?? '';
-        $grossAmount = $payload['gross_amount'] ?? '';
-        $signatureKey = $payload['signature_key'] ?? '';
+        $orderId = (string) ($payload['order_id'] ?? '');
+        $statusCode = (string) ($payload['status_code'] ?? '');
+        $grossAmount = (string) ($payload['gross_amount'] ?? '');
+        $signatureKey = (string) ($payload['signature_key'] ?? '');
 
         $localSignature = hash('sha512', $orderId.$statusCode.$grossAmount.$this->serverKey);
 
-        if ($signatureKey !== $localSignature) {
-            throw new \Exception('Midtrans signature verification failed.');
+        if (! hash_equals($localSignature, $signatureKey)) {
+            throw new InvalidWebhookSignatureException('Midtrans signature verification failed.');
         }
 
         $status = $this->mapStatus($payload['transaction_status'] ?? '');

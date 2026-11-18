@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\PaymentGateway\Drivers;
 
 use App\Models\Transaction;
@@ -72,7 +74,10 @@ class AriepulsaDriver implements GatewayDriverInterface
             ];
         }
 
-        $response = Http::asForm()->post($url, $payload);
+        $response = Http::asForm()
+            ->timeout(10)
+            ->connectTimeout(3)
+            ->post($url, $payload);
 
         if ($response->failed()) {
             Log::error('Ariepulsa payment creation failed', [
@@ -136,11 +141,14 @@ class AriepulsaDriver implements GatewayDriverInterface
             $url = 'https://ariepulsa.com/api/qris';
         }
 
-        $response = Http::asForm()->post($url, [
-            'api_key' => $this->apiKey,
-            'action' => 'status-deposit',
-            'kode_deposit' => $transaction->pg_ref_id,
-        ]);
+        $response = Http::asForm()
+            ->timeout(10)
+            ->connectTimeout(3)
+            ->post($url, [
+                'api_key' => $this->apiKey,
+                'action' => 'status-deposit',
+                'kode_deposit' => $transaction->pg_ref_id,
+            ]);
 
         if ($response->failed()) {
             Log::error('Ariepulsa status check failed', [

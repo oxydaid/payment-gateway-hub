@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Dashboard\ApiKeyController;
 use App\Http\Controllers\Dashboard\AppSettingController;
@@ -9,14 +11,15 @@ use App\Http\Controllers\Dashboard\PaymentGatewayController;
 use App\Http\Controllers\Dashboard\ProfileController;
 use App\Http\Controllers\Dashboard\TransactionController;
 use App\Http\Controllers\PaymentCheckoutController;
+use App\Http\Controllers\PaymentQrisController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware('guest')->group(function () {
+Route::middleware('guest')->group(function (): void {
     Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
-    Route::post('/login', [LoginController::class, 'login']);
+    Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:10,1');
 });
 
-Route::middleware('auth')->group(function () {
+Route::middleware('auth')->group(function (): void {
     Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
@@ -43,11 +46,11 @@ Route::middleware('auth')->group(function () {
     // Payment Gateways & Methods CRUD
     Route::get('/payment-gateways', [PaymentGatewayController::class, 'index'])->name('payment-gateways.index');
     Route::post('/payment-gateways', [PaymentGatewayController::class, 'store'])->name('payment-gateways.store');
-    Route::post('/payment-gateways/{gateway}/update', [PaymentGatewayController::class, 'update'])->name('payment-gateways.update');
+    Route::put('/payment-gateways/{gateway}', [PaymentGatewayController::class, 'update'])->name('payment-gateways.update');
     Route::delete('/payment-gateways/{gateway}', [PaymentGatewayController::class, 'destroy'])->name('payment-gateways.destroy');
 
     Route::post('/payment-gateways/{gateway}/methods', [PaymentGatewayController::class, 'storeMethod'])->name('payment-gateways.methods.store');
-    Route::post('/payment-gateways/methods/{method}/update', [PaymentGatewayController::class, 'updateMethod'])->name('payment-gateways.methods.update');
+    Route::put('/payment-gateways/methods/{method}', [PaymentGatewayController::class, 'updateMethod'])->name('payment-gateways.methods.update');
     Route::delete('/payment-gateways/methods/{method}', [PaymentGatewayController::class, 'destroyMethod'])->name('payment-gateways.methods.destroy');
 
     // App Settings
@@ -65,3 +68,7 @@ Route::middleware('auth')->group(function () {
 });
 
 Route::get('/payments/checkout/{reference_id}', [PaymentCheckoutController::class, 'show'])->name('payments.checkout');
+Route::get('/payments/qris/{reference_id}.{format}', PaymentQrisController::class)
+    ->whereIn('format', ['png', 'svg'])
+    ->middleware('throttle:120,1')
+    ->name('payments.qris');

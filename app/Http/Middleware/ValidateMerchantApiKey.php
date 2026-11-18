@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Middleware;
 
 use App\Models\ApiKey;
@@ -24,11 +26,13 @@ class ValidateMerchantApiKey
             ], Response::HTTP_UNAUTHORIZED);
         }
 
-        $apiKey = ApiKey::where('key', $token)
+        $hashedToken = ApiKey::hashToken($token);
+
+        $apiKey = ApiKey::where('key_hash', $hashedToken)
             ->where('is_active', true)
             ->first();
 
-        if ($apiKey) {
+        if ($apiKey !== null && hash_equals($apiKey->key_hash, $hashedToken)) {
             $apiKey->update(['last_used_at' => now()]);
 
             if ($apiKey->merchant_id) {
@@ -63,7 +67,7 @@ class ValidateMerchantApiKey
                 }
             }
         } else {
-            // 2. Fallback to legacy merchant api_key for backward compatibility
+            // Fallback to legacy merchant api_key for backward compatibility
             $merchant = Merchant::where('api_key', $token)
                 ->where('is_active', true)
                 ->first();
@@ -78,7 +82,7 @@ class ValidateMerchantApiKey
 
         // Store merchant and key metadata in request attributes
         $request->attributes->set('merchant', $merchant);
-        $request->attributes->set('is_global_key', $apiKey && ! $apiKey->merchant_id);
+        $request->attributes->set('is_global_key', $apiKey !== null && ! $apiKey->merchant_id);
 
         return $next($request);
     }

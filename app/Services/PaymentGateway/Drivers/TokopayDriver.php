@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\PaymentGateway\Drivers;
 
+use App\Exceptions\InvalidWebhookSignatureException;
 use App\Models\Transaction;
 use App\Services\PaymentGateway\GatewayDriverInterface;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
@@ -156,7 +159,7 @@ class TokopayDriver implements GatewayDriverInterface
         }
 
         if (! $isValid) {
-            throw new \Exception('Tokopay signature verification failed.');
+            throw new InvalidWebhookSignatureException('Tokopay signature verification failed.');
         }
 
         $mappedStatus = $this->mapStatus($status);
@@ -190,7 +193,7 @@ class TokopayDriver implements GatewayDriverInterface
                 'secret' => $this->secretKey,
                 'ref_id' => $transaction->reference_id,
                 'nominal' => (int) $transaction->total_amount,
-                'metode' => $paymentCode,
+                'metode' => is_array($paymentCode) ? $paymentCode[0] : $paymentCode,
             ]);
 
         if ($response->failed()) {
@@ -230,7 +233,10 @@ class TokopayDriver implements GatewayDriverInterface
         };
     }
 
-    protected function mapPaymentMethod(string $code): string
+    /**
+     * @return string|array<int, string>
+     */
+    protected function mapPaymentMethod(string $code): string|array
     {
         // Tokopay maps, e.g. bca_va -> BCAVA, qris -> QRIS
         return match ($code) {
