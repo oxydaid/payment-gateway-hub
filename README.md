@@ -45,7 +45,7 @@ Terintegrasi melalui pola Strategy/Adapter (`GatewayDriverInterface`) dengan in-
 
 ## 📚 Dokumentasi API & Webhook Terintegrasi
 
-Setelah aplikasi berjalan, tersedia dua dokumentasi interaktif bawaan:
+* **AI Vibe Coding Single-File Context:** [API_SPEC.md](API_SPEC.md) (Dokumen panduan lengkap siap-`@mention` untuk Cursor, Claude Code, Windsurf, ChatGPT saat membangun client downstream, mencakup alur QRIS/VA/Redirect, idempotensi, error matrix, dan verifikasi webhook HMAC).
 * **OpenAPI / Scalar API Reference:** `GET /docs/api` (dihasilkan otomatis oleh `dedoc/scramble` dari kode aplikasi).
 * **Merchant Webhook Manual:** `GET /docs/webhook` (panduan skema payload, verifikasi HMAC-SHA256, aturan SSRF, serta contoh kode PHP, Node.js, dan Python).
 
