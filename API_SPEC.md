@@ -1,304 +1,196 @@
 # Payment Gateway Hub — API & Webhook Spec
+> AI Agent: This is the single-source-of-truth for downstream merchant integration.
 
-> AI Context Directive: Single-source-of-truth contract for downstream merchant integration. Strict types, exact payloads, and zero assumptions.
+## AUTH
+- **Base URL:** `https://your-hub.com/api/v1`
+- **Headers:** `Authorization: Bearer <API_KEY>` · `Content-Type: application/json` · `Accept: application/json`
+- **Key types:** `pb_mcht_*` (merchant-scoped, no `merchant_id` needed) · `pb_live_*` / `pb_test_*` (global, requires `merchant_id` in body)
+- **Rate limits:** 60 req/min merchant endpoints · 120 req/min webhooks & QRIS
 
-## 1. Authentication & Headers
-- **Base URL:** `https://your-hub.com/api/v1` (Local: `http://localhost:8000/api/v1`)
-- **Headers:**
-  ```http
-  Authorization: Bearer <API_KEY>
-  Content-Type: application/json
-  Accept: application/json
-  Idempotency-Key: <unique-uuid-or-order-id>
-  ```
-- **Key Types:**
-  - `pb_mcht_*`: Merchant-scoped key (no `merchant_id` needed).
-  - `pb_live_*` / `pb_test_*`: Global key (requires `merchant_id` in body or `X-Merchant-ID` header).
-- **Rate Limits:** 60 req/min for merchant endpoints (`throttle:60,1`), 120 req/min for webhooks & QRIS.
-
-## 2. Idempotency Protocol
-- Replaying `POST /api/v1/payments` with the same `Idempotency-Key` or `merchant_ref_id` and identical `amount` + `payment_method_id` returns **`200 OK`** with `"idempotent": true` (safe replay, no duplicate upstream charges).
-- Replaying with conflicting `amount` or `payment_method_id` returns **`409 Conflict`**.
-
-## 3. Standard Response Envelopes
-```json
-// Success
-{ "success": true, "data": { ... } }
-
-// Error
-{ "success": false, "message": "Reason", "errors": { "field": ["detail"] } }
+## RESPONSE ENVELOPE
 ```
-
-## 4. Endpoints Reference
-
-### 4.1. List Payment Methods
-`GET /api/v1/payment-methods`
-```json
-// 200 OK
-{
-  "success": true,
-  "data": [
-    {
-      "id": 1,
-      "name": "QRIS",
-      "code": "QRIS",
-      "type": "qris", // "qris" | "va" | "ewallet" | "retail"
-      "fee_type": "percent", // "fix" | "percent" | "mix"
-      "fee_fix": 0,
-      "fee_percent": 0.7,
-      "icon_url": "https://your-hub.com/storage/icons/qris.svg",
-      "gateway_code": "tokopay",
-      "is_active": true
-    }
-  ]
-}
+Success → { "success": true, "data": {...} }
+Error   → { "success": false, "message": "...", "errors": {"field": ["detail"]} }
 ```
 
 ---
 
-### 4.2. Create Payment
-`POST /api/v1/payments`
+## ENDPOINTS
 
-**Request Body:**
+### GET /payment-methods
+Returns active payment methods array.
+
+```json
+{ "success": true, "data": [
+  { "id": 1, "name": "QRIS", "code": "QRIS", "type": "qris",
+    "fee_type": "percent", "fee_fix": 0, "fee_percent": 0.7,
+    "icon_url": "https://your-hub.com/storage/icons/qris.svg",
+    "gateway_code": "tokopay", "is_active": true }
+]}
+```
+> `fee_type`: `"fix"` | `"percent"` | `"mix"` · `type`: `"qris"` | `"va"` | `"ewallet"` | `"retail"`
+
+---
+
+### POST /payments
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `merchant_ref_id` | string | ✓ | Your order ID, max 255, unique per merchant |
+| `payment_method_id` | int | ✓ | From GET /payment-methods, must be active |
+| `amount` | numeric | ✓ | IDR, min 100 (before fee) |
+| `redirect_url` | url | ✓ | Finish page, max 500, must be https |
+| `merchant_id` | int | global key only | Required when using `pb_live_*` key |
+
+**Optional header:** `Idempotency-Key: <uuid>` — same key + same params → `200 + "idempotent": true`. Same key + different `amount`/`payment_method_id` → `409`.
+
+**Response 201 — Transaction Object:**
 ```json
 {
-  "merchant_ref_id": "INV-20261119-001", // required, string, max:255
-  "payment_method_id": 1,                // required, integer, exists & active
-  "amount": 50000,                       // required, numeric, min:100
-  "redirect_url": "https://merchant.com/checkout/finish", // required, url, max:500
-  "merchant_id": 1                       // optional, required only if using global key
+  "reference_id": "9d901865-c967-4d7a-b5e0-91a5db4b3211",  // Hub UUID
+  "merchant_ref_id": "INV-20261119-001",
+  "payment_method": { "id": 1, "name": "QRIS", "code": "QRIS", "type": "qris" },
+  "amount": 50000, "fee": 350, "total_amount": 50350,
+  "status": "PENDING",
+  "checkout_url": "https://upstream-pg.id/pay/xyz",   // null for QRIS & VA
+  "qris_url": "https://your-hub.com/payments/qris/{reference_id}.png", // QRIS only, null otherwise
+  "payment_code": "00020101...",  // QRIS: EMVCo string · VA: account number · null for redirect
+  "redirect_url": "https://merchant.com/checkout/finish",
+  "pg_ref_id": "TRX-TOKOPAY-1234",
+  "expired_at": "2026-11-20T16:00:00Z",
+  "created_at": "2026-11-19T16:00:00Z"
 }
 ```
 
-**Client UI Handling by Payment Type:**
-- **QRIS (`type: "qris"`):**
-  - Render image directly via `qris_url` (`<img src={data.qris_url} />`) — dynamically rendered locally by Hub, no external dependency.
-  - Or render raw EMVCo string from `payment_code` via local client QR canvas library.
-- **Virtual Account (`type: "va"`):**
-  - Display `payment_code` as VA Account Number + copy button + `total_amount`.
-- **Redirect / E-Wallet (`checkout_url != null`):**
-  - Redirect user to `checkout_url` (`window.location.href = data.checkout_url`).
+**Client rendering by type:**
+| `type` | What to show | Key field |
+|---|---|---|
+| `qris` | QR image or canvas render | `qris_url` (img src) or `payment_code` (EMVCo) |
+| `va` | VA number + copy button + total | `payment_code` |
+| `ewallet` / `retail` | Redirect user | `checkout_url` |
 
-**Responses (201 Created):**
-
-*A. QRIS Response:*
+**Idempotent replay (200):**
 ```json
-{
-  "success": true,
-  "data": {
-    "reference_id": "9d901865-c967-4d7a-b5e0-91a5db4b3211",
-    "merchant_ref_id": "INV-20261119-001",
-    "payment_method": { "id": 1, "name": "QRIS", "code": "QRIS", "type": "qris" },
-    "amount": 50000,
-    "fee": 350,
-    "total_amount": 50350,
-    "status": "PENDING",
-    "checkout_url": "https://api.tokopay.id/pay/9d901865",
-    "qris_url": "https://your-hub.com/payments/qris/9d901865-c967-4d7a-b5e0-91a5db4b3211.png",
-    "payment_code": "00020101021226670016ID.CO.TOKOPAY...5802ID630489AB",
-    "redirect_url": "https://merchant.com/checkout/finish",
-    "pg_ref_id": "TRX-TOKOPAY-1234",
-    "expired_at": "2026-11-20T16:00:00Z",
-    "created_at": "2026-11-19T16:00:00Z"
-  }
-}
-```
-
-*B. Virtual Account Response:*
-```json
-{
-  "success": true,
-  "data": {
-    "reference_id": "9d902001-f11a-4299-8ab1-11a5db4b9988",
-    "merchant_ref_id": "INV-20261119-002",
-    "payment_method": { "id": 2, "name": "BCA Virtual Account", "code": "BCAVA", "type": "va" },
-    "amount": 100000,
-    "fee": 4000,
-    "total_amount": 104000,
-    "status": "PENDING",
-    "checkout_url": null,
-    "qris_url": null,
-    "payment_code": "88081234567890",
-    "redirect_url": "https://merchant.com/checkout/finish",
-    "expired_at": "2026-11-20T16:00:00Z",
-    "created_at": "2026-11-19T16:00:00Z"
-  }
-}
-```
-
-*C. Redirect / E-Wallet Response:*
-```json
-{
-  "success": true,
-  "data": {
-    "reference_id": "9d903551-77bb-4311-bf32-99a5db4b7711",
-    "merchant_ref_id": "INV-20261119-003",
-    "payment_method": { "id": 3, "name": "Midtrans Snap", "code": "midtrans_snap", "type": "ewallet" },
-    "amount": 250000,
-    "fee": 5750,
-    "total_amount": 255750,
-    "status": "PENDING",
-    "checkout_url": "https://app.sandbox.midtrans.com/snap/v4/redirection/8f9b9f71-2993-4e4b",
-    "qris_url": null,
-    "payment_code": null,
-    "redirect_url": "https://merchant.com/checkout/finish"
-  }
-}
-```
-
-*D. Idempotent Replay (200 OK):*
-```json
-{
-  "success": true,
-  "idempotent": true,
+{ "success": true, "idempotent": true,
   "message": "Transaction already exists. Returning existing record.",
-  "data": { "reference_id": "9d901865...", "status": "PENDING", ... }
-}
+  "data": { "reference_id": "...", "status": "PENDING" } }
 ```
 
 ---
 
-### 4.3. Check Transaction Status
-`GET /api/v1/transactions/{reference_id}`
-- `{reference_id}` accepts Hub UUID (`9d901865-...`) OR merchant's `merchant_ref_id`.
-- Status Lifecycle: `PENDING` -> `PAID` -> `DONE` (or `EXPIRED` / `FAILED`).
+### GET /transactions/{reference_id}
+- Accepts Hub UUID **or** `merchant_ref_id`
+- Status lifecycle: `PENDING` → `PAID` → `DONE` (or `EXPIRED` / `FAILED`)
+
 ```json
-// 200 OK
+{ "success": true, "data": {
+  "reference_id": "9d901865-c967-4d7a-b5e0-91a5db4b3211",
+  "merchant_ref_id": "INV-20261119-001",
+  "status": "PAID", "total_amount": 50350,
+  "paid_at": "2026-11-19T16:04:12Z"
+}}
+```
+
+---
+
+### GET /webhook-logs
+Paginated outbound webhook delivery history. Auth required. Filtered by merchant scope.
+
+---
+
+## ERRORS
+| Code | Condition |
+|---|---|
+| `400` | Malformed JSON / SSRF-blocked URL |
+| `401` | Missing or invalid Bearer token |
+| `403` | Inactive merchant / unauthorized scope |
+| `404` | Transaction not found |
+| `409` | Idempotency key conflict (different amount or method) |
+| `422` | Validation failed — `errors` object contains field-level messages |
+| `429` | Rate limit exceeded |
+| `500` | Upstream PG outage or communication error |
+
+---
+
+## WEBHOOK (Hub → Merchant)
+
+Triggered async when status reaches `PAID`, `EXPIRED`, or `FAILED`.
+
+**Request:** `POST {merchant_webhook_url}`
+```
+X-Bridge-Signature: <hex_hmac_sha256>   ← HMAC-SHA256(raw_body, webhook_secret)
+Content-Type: application/json
+```
+
+**Payload:**
+```json
 {
-  "success": true,
-  "data": {
-    "reference_id": "9d901865-c967-4d7a-b5e0-91a5db4b3211",
-    "merchant_ref_id": "INV-20261119-001",
-    "status": "PAID",
-    "total_amount": 50350,
-    "paid_at": "2026-11-19T16:04:12Z"
-  }
+  "reference_id": "9d901865-c967-4d7a-b5e0-91a5db4b3211",
+  "merchant_ref_id": "INV-20261119-001",
+  "payment_gateway": "tokopay",
+  "payment_method": "QRIS",
+  "amount": 50000, "fee": 350, "total_amount": 50350,
+  "status": "PAID",
+  "pg_ref_id": "TRX-TOKOPAY-1234",
+  "checkout_url": null,
+  "qris_url": "https://your-hub.com/payments/qris/9d901865.png",
+  "created_at": "2026-11-19T16:00:00Z",
+  "paid_at": "2026-11-19T16:04:12Z"
 }
 ```
 
----
+**Merchant MUST respond:** `200 OK` + `{"success": true}` → transitions Hub status to `DONE`.
+Any other response → retry backoff: `10s · 60s · 300s · 1800s · 3600s` (5 attempts).
 
-## 5. Error Reference Matrix
+> ⚠️ **CRITICAL:** Compute HMAC on **raw body bytes**, never on re-encoded JSON.
 
-| HTTP Code | Condition | Example Response Body |
-| :--- | :--- | :--- |
-| `400 Bad Request` | Malformed JSON / SSRF URL blocked | `{"success": false, "message": "Callback blocked by SSRF protection."}` |
-| `401 Unauthorized` | Missing / invalid Bearer token | `{"success": false, "message": "Invalid or inactive API Key."}` |
-| `403 Forbidden` | Inactive merchant / unauthorized scope | `{"success": false, "message": "Merchant context not found or inactive."}` |
-| `404 Not Found` | Transaction reference does not exist | `{"success": false, "message": "Transaction not found."}` |
-| `409 Conflict` | Same idempotency key with different payload | `{"success": false, "message": "Idempotency conflict: transaction exists with different amount or payment method."}` |
-| `422 Unprocessable` | Validation failed | `{"success": false, "message": "The given data was invalid.", "errors": {"amount": ["The amount must be at least 100."]}}` |
-| `429 Too Many Req` | Rate limit exceeded | `{"message": "Too Many Attempts."}` |
-| `500 Server Error` | Upstream PG outage | `{"success": false, "message": "Failed to communicate with payment gateway: <error>"}` |
-
----
-
-## 6. Outbound Webhook Specification (Hub -> Merchant)
-
-Triggered asynchronously when transaction reaches `PAID`, `EXPIRED`, or `FAILED`.
-
-### 6.1. Webhook Request
-- **Method:** `POST` to merchant's registered `webhook_url`
-- **Headers:**
-  ```http
-  Content-Type: application/json
-  Accept: application/json
-  X-Bridge-Signature: <hex_hmac_sha256>
-  ```
-- **Payload:**
-  ```json
-  {
-    "reference_id": "9d901865-c967-4d7a-b5e0-91a5db4b3211",
-    "merchant_ref_id": "INV-20261119-001",
-    "payment_gateway": "tokopay",
-    "payment_method": "QRIS",
-    "amount": 50000,
-    "fee": 350,
-    "total_amount": 50350,
-    "status": "PAID",
-    "pg_status": "PAID",
-    "pg_ref_id": "TRX-TOKOPAY-1234",
-    "checkout_url": "https://api.tokopay.id/pay/9d901865",
-    "qris_url": "https://your-hub.com/payments/qris/9d901865.png",
-    "created_at": "2026-11-19T16:00:00Z",
-    "paid_at": "2026-11-19T16:04:12Z"
-  }
-  ```
-
-### 6.2. Mandatory Merchant Response
-Merchant **MUST** return HTTP **`200 OK`** with JSON:
-```json
-{ "success": true }
-```
-- Returning `{"success": true}` transitions transaction in Hub to **`DONE`**.
-- Any other response or timeout triggers retry backoff: 5 retries at `10s`, `60s`, `300s`, `1800s`, `3600s`.
-
----
-
-## 7. Webhook Verification Snippets
-
-> **CRITICAL:** Compute HMAC-SHA256 using the **RAW request body bytes/string** and merchant's `webhook_secret`. Never use parsed/re-encoded JSON.
-
-### PHP / Laravel
+### Verification — PHP/Laravel
 ```php
-$signature = $request->header('X-Bridge-Signature');
-$rawBody = $request->getContent();
+$sig    = $request->header('X-Bridge-Signature');
+$raw    = $request->getContent();
 $secret = config('services.hub.webhook_secret');
-
-if (! $signature || ! hash_equals(hash_hmac('sha256', $rawBody, $secret), $signature)) {
-    return response()->json(['success' => false, 'message' => 'Invalid signature'], 401);
+if (!$sig || !hash_equals(hash_hmac('sha256', $raw, $secret), $sig)) {
+    return response()->json(['success' => false], 401);
 }
-
-$payload = json_decode($rawBody, true);
-if ($payload['status'] === 'PAID') {
-    // Process order fulfillment here
-}
+$data = json_decode($raw, true);
+if ($data['status'] === 'PAID') { /* fulfill order */ }
 return response()->json(['success' => true]);
 ```
 
-### Node.js / Next.js (App Router: `app/api/webhook/route.ts`)
+### Verification — Node.js / Next.js
 ```typescript
-import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-
 export async function POST(req: NextRequest) {
-  const signature = req.headers.get('X-Bridge-Signature') || '';
-  const rawBody = await req.text();
-  const secret = process.env.HUB_WEBHOOK_SECRET || '';
-
-  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-  const sigBuf = Buffer.from(signature, 'hex');
-  const expBuf = Buffer.from(expected, 'hex');
-
-  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+  const sig = req.headers.get('X-Bridge-Signature') ?? '';
+  const raw = await req.text();
+  const exp = crypto.createHmac('sha256', process.env.HUB_WEBHOOK_SECRET!).update(raw).digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(exp, 'hex')))
     return NextResponse.json({ success: false }, { status: 401 });
-  }
-
-  const payload = JSON.parse(rawBody);
-  if (payload.status === 'PAID') {
-    // Process order fulfillment here
-  }
+  const data = JSON.parse(raw);
+  if (data.status === 'PAID') { /* fulfill order */ }
   return NextResponse.json({ success: true });
 }
 ```
 
-### Python / FastAPI
+### Verification — Python / FastAPI
 ```python
-from fastapi import FastAPI, Request, HTTPException, Header
 import hmac, hashlib, json, os
-
-app = FastAPI()
 SECRET = os.getenv("HUB_WEBHOOK_SECRET", "").encode()
 
-@app.post("/api/webhook")
+@app.post("/webhook")
 async def webhook(request: Request, x_bridge_signature: str = Header(None)):
-    raw_body = await request.body()
-    expected = hmac.new(SECRET, raw_body, hashlib.sha256).hexdigest()
-    if not x_bridge_signature or not hmac.compare_digest(expected, x_bridge_signature):
-        raise HTTPException(status_code=401, detail="Invalid signature")
-
-    data = json.loads(raw_body)
-    if data.get("status") == "PAID":
-        pass # Process order fulfillment
+    raw = await request.body()
+    exp = hmac.new(SECRET, raw, hashlib.sha256).hexdigest()
+    if not x_bridge_signature or not hmac.compare_digest(exp, x_bridge_signature):
+        raise HTTPException(401, "Invalid signature")
+    data = json.loads(raw)
+    if data.get("status") == "PAID": pass  # fulfill order
     return {"success": True}
 ```
+
+---
+
+## DYNAMIC QRIS IMAGE
+`GET /payments/qris/{reference_id}.{png|svg}`
+- No auth required (public, cacheable per transaction)
+- Returns QR image rendered server-side from EMVCo string
+- Use as `<img src="...">` directly in merchant UI
