@@ -5,14 +5,13 @@ declare(strict_types=1);
 namespace App\Services\PaymentGateway\Drivers;
 
 use App\Models\Transaction;
-use App\Services\PaymentGateway\GatewayDriverInterface;
+use App\Services\PaymentGateway\AbstractGatewayDriver;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
 use App\Services\PaymentGateway\Responses\GatewayStatusResponse;
-use Carbon\CarbonImmutable;
+use Exception;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
-class PakasirDriver implements GatewayDriverInterface
+class PakasirDriver extends AbstractGatewayDriver
 {
     protected string $projectSlug;
 
@@ -63,26 +62,19 @@ class PakasirDriver implements GatewayDriverInterface
                 'api_key' => $this->apiKey,
             ]);
 
-        if ($response->failed()) {
-            Log::error('Pakasir payment creation failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Pakasir payment creation', $transaction->id);
 
         $data = $response->json();
         $payment = $data['payment'] ?? null;
 
         if (! $payment) {
-            throw new \Exception('Pakasir API error: '.($data['message'] ?? 'Failed to create payment'));
+            throw new Exception('Pakasir API error: '.($data['message'] ?? 'Failed to create payment'));
         }
 
         $paymentNumber = $payment['payment_number'] ?? null;
         $qrisUrl = null;
         if ($paymentCode === 'qris' && ! empty($paymentNumber)) {
-            $qrisUrl = $paymentNumber; // Pass raw QRIS string to let the controller download/save it
+            $qrisUrl = $paymentNumber; // Pass raw QRIS string to let the controller render it
         }
 
         $checkoutUrl = 'https://app.pakasir.com/pay/'.$this->projectSlug.'/'.(int) $transaction->total_amount.'?order_id='.$transaction->reference_id.'&redirect='.urlencode(url('/payments/checkout/'.$transaction->reference_id));
@@ -98,25 +90,22 @@ class PakasirDriver implements GatewayDriverInterface
     }
 
     /**
-     * @throws \Exception
+     * @throws Exception
      */
     public function handleWebhook(array $payload, array $headers = []): GatewayStatusResponse
     {
         $orderId = $payload['order_id'] ?? '';
         if (empty($orderId)) {
-            throw new \Exception('Pakasir webhook missing order_id.');
+            throw new Exception('Pakasir webhook missing order_id.');
         }
 
         $status = $this->mapStatus($payload['status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            $paidAt = isset($payload['completed_at'])
-                ? CarbonImmutable::parse($payload['completed_at'])
-                : now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($payload['completed_at'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
-            pgRefId: $orderId,
+            pgRefId: (string) $orderId,
             status: $status,
             paidAt: $paidAt,
             rawResponse: $payload
@@ -137,29 +126,19 @@ class PakasirDriver implements GatewayDriverInterface
                 'api_key' => $this->apiKey,
             ]);
 
-        if ($response->failed()) {
-            Log::error('Pakasir status check failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Pakasir status check', $transaction->id);
 
         $data = $response->json();
         $transactionData = $data['transaction'] ?? null;
 
         if (! $transactionData) {
-            throw new \Exception('Transaction not found on Pakasir.');
+            throw new Exception('Transaction not found on Pakasir.');
         }
 
         $status = $this->mapStatus($transactionData['status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            $paidAt = isset($transactionData['completed_at'])
-                ? CarbonImmutable::parse($transactionData['completed_at'])
-                : now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($transactionData['completed_at'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $transactionData['order_id'] ?? $transaction->reference_id,

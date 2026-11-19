@@ -6,14 +6,12 @@ namespace App\Services\PaymentGateway\Drivers;
 
 use App\Exceptions\InvalidWebhookSignatureException;
 use App\Models\Transaction;
-use App\Services\PaymentGateway\GatewayDriverInterface;
+use App\Services\PaymentGateway\AbstractGatewayDriver;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
 use App\Services\PaymentGateway\Responses\GatewayStatusResponse;
-use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
-class XenditDriver implements GatewayDriverInterface
+class XenditDriver extends AbstractGatewayDriver
 {
     protected string $secretKey;
 
@@ -94,14 +92,7 @@ class XenditDriver implements GatewayDriverInterface
             ->retry(3, 100)
             ->post($baseUrl, $payload);
 
-        if ($response->failed()) {
-            Log::error('Xendit payment creation failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Xendit payment creation', $transaction->id);
 
         $data = $response->json();
 
@@ -139,7 +130,7 @@ class XenditDriver implements GatewayDriverInterface
     }
 
     /**
-     * @throws \Exception
+     * @throws InvalidWebhookSignatureException
      */
     public function handleWebhook(array $payload, array $headers = []): GatewayStatusResponse
     {
@@ -157,10 +148,9 @@ class XenditDriver implements GatewayDriverInterface
         if (isset($payload['event']) && isset($payload['data'])) {
             $data = $payload['data'];
             $status = $this->mapStatus($data['status'] ?? '');
-            $paidAt = null;
-            if ($status === 'PAID') {
-                $paidAt = isset($data['updated']) ? CarbonImmutable::parse($data['updated']) : now();
-            }
+            $paidAt = $status === 'PAID'
+                ? $this->resolvePaidAt($data['updated'] ?? null)
+                : null;
 
             return new GatewayStatusResponse(
                 pgRefId: $data['payment_request_id'] ?? $data['id'] ?? null,
@@ -171,10 +161,9 @@ class XenditDriver implements GatewayDriverInterface
         }
 
         $status = $this->mapStatus($payload['status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            $paidAt = isset($payload['updated']) ? CarbonImmutable::parse($payload['updated']) : now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($payload['updated'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $payload['id'] ?? null,
@@ -199,21 +188,13 @@ class XenditDriver implements GatewayDriverInterface
             ->retry(3, 100)
             ->get($url);
 
-        if ($response->failed()) {
-            Log::error('Xendit status check failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Xendit status check', $transaction->id);
 
         $data = $response->json();
         $status = $this->mapStatus($data['status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            $paidAt = isset($data['updated']) ? CarbonImmutable::parse($data['updated']) : now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($data['updated'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $data['payment_request_id'] ?? $data['id'] ?? null,

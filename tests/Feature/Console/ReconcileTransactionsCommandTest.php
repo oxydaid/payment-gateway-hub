@@ -85,3 +85,44 @@ test('it marks expired transaction as EXPIRED and dispatches callback', function
 
     Queue::assertPushed(SendMerchantCallbackJob::class);
 });
+
+test('it reconciles pending tokopay transaction and extracts upstream paid_at timestamp', function (): void {
+    Queue::fake();
+    Http::preventStrayRequests();
+
+    $upstreamPaidAt = '2026-11-19 12:34:56';
+
+    Http::fake([
+        'https://api.tokopay.id/v1/order*' => Http::response([
+            'status' => 'Success',
+            'data' => [
+                'status' => 'Success',
+                'trx_id' => 'tokopay-trx-777',
+                'updated_at' => $upstreamPaidAt,
+            ],
+        ], 200),
+    ]);
+
+    $merchant = Merchant::factory()->create();
+    $gateway = PaymentGateway::factory()->create([
+        'code' => 'tokopay',
+        'credentials' => [
+            'merchant_id' => 'M123',
+            'secret_key' => 'secret123',
+        ],
+    ]);
+    $method = PaymentMethod::factory()->for($gateway, 'gateway')->create(['code' => 'QRIS']);
+    $transaction = Transaction::factory()
+        ->for($merchant)
+        ->for($method, 'paymentMethod')
+        ->create([
+            'reference_id' => 'tx-tokopay-reconcile-1',
+            'merchant_ref_id' => 'INV-TP-1',
+        ]);
+
+    $this->artisan('app:reconcile-transactions')->assertExitCode(0);
+
+    $transaction->refresh();
+    expect($transaction->status)->toBe('PAID');
+    expect($transaction->paid_at->format('Y-m-d H:i:s'))->toBe($upstreamPaidAt);
+});

@@ -6,14 +6,12 @@ namespace App\Services\PaymentGateway\Drivers;
 
 use App\Exceptions\InvalidWebhookSignatureException;
 use App\Models\Transaction;
-use App\Services\PaymentGateway\GatewayDriverInterface;
+use App\Services\PaymentGateway\AbstractGatewayDriver;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
 use App\Services\PaymentGateway\Responses\GatewayStatusResponse;
-use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
-class MidtransDriver implements GatewayDriverInterface
+class MidtransDriver extends AbstractGatewayDriver
 {
     protected string $serverKey;
 
@@ -94,14 +92,7 @@ class MidtransDriver implements GatewayDriverInterface
             ->retry(3, 100)
             ->post($baseUrl, $payload);
 
-        if ($response->failed()) {
-            Log::error('Midtrans payment creation failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Midtrans payment creation', $transaction->id);
 
         $data = $response->json();
 
@@ -116,7 +107,7 @@ class MidtransDriver implements GatewayDriverInterface
     }
 
     /**
-     * @throws \Exception
+     * @throws InvalidWebhookSignatureException
      */
     public function handleWebhook(array $payload, array $headers = []): GatewayStatusResponse
     {
@@ -132,12 +123,9 @@ class MidtransDriver implements GatewayDriverInterface
         }
 
         $status = $this->mapStatus($payload['transaction_status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            $paidAt = isset($payload['settlement_time'])
-                ? CarbonImmutable::parse($payload['settlement_time'])
-                : now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($payload['settlement_time'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $payload['transaction_id'] ?? null,
@@ -165,23 +153,13 @@ class MidtransDriver implements GatewayDriverInterface
             ->retry(3, 100)
             ->get($url);
 
-        if ($response->failed()) {
-            Log::error('Midtrans status check failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Midtrans status check', $transaction->id);
 
         $data = $response->json();
         $status = $this->mapStatus($data['transaction_status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            $paidAt = isset($data['settlement_time'])
-                ? CarbonImmutable::parse($data['settlement_time'])
-                : now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($data['settlement_time'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $data['transaction_id'] ?? null,

@@ -6,14 +6,13 @@ namespace App\Services\PaymentGateway\Drivers;
 
 use App\Exceptions\InvalidWebhookSignatureException;
 use App\Models\Transaction;
-use App\Services\PaymentGateway\GatewayDriverInterface;
+use App\Services\PaymentGateway\AbstractGatewayDriver;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
 use App\Services\PaymentGateway\Responses\GatewayStatusResponse;
-use Carbon\CarbonImmutable;
+use Exception;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
-class TokopayDriver implements GatewayDriverInterface
+class TokopayDriver extends AbstractGatewayDriver
 {
     protected string $merchantId;
 
@@ -84,7 +83,6 @@ class TokopayDriver implements GatewayDriverInterface
             'amount' => $amount,
             'customer_name' => $transaction->merchant->name,
             'customer_email' => 'merchant_'.$transaction->merchant_id.'@example.com',
-            'customer_phone' => '081234567890',
             'redirect_url' => url('/payments/checkout/'.$transaction->reference_id),
             'expired_ts' => 0,
             'signature' => $signature,
@@ -95,19 +93,12 @@ class TokopayDriver implements GatewayDriverInterface
             ->retry(3, 100)
             ->post($url, $payload);
 
-        if ($response->failed()) {
-            Log::error('Tokopay payment creation failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Tokopay payment creation', $transaction->id);
 
         $data = $response->json();
         $statusStr = $data['status'] ?? '';
         if (strcasecmp($statusStr, 'Success') !== 0) {
-            throw new \Exception('Tokopay API error: '.($data['message'] ?? 'Unknown error'));
+            throw new Exception('Tokopay API error: '.($data['message'] ?? 'Unknown error'));
         }
 
         $result = $data['data'] ?? [];
@@ -124,7 +115,7 @@ class TokopayDriver implements GatewayDriverInterface
     }
 
     /**
-     * @throws \Exception
+     * @throws Exception
      */
     public function handleWebhook(array $payload, array $headers = []): GatewayStatusResponse
     {
@@ -163,11 +154,9 @@ class TokopayDriver implements GatewayDriverInterface
         }
 
         $mappedStatus = $this->mapStatus($status);
-        $paidAt = null;
-        if ($mappedStatus === 'PAID') {
-            $updatedAt = $payload['data']['updated_at'] ?? null;
-            $paidAt = $updatedAt ? CarbonImmutable::parse($updatedAt) : now();
-        }
+        $paidAt = $mappedStatus === 'PAID'
+            ? $this->resolvePaidAt($payload['data']['updated_at'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $payload['reference'] ?? null,
@@ -196,23 +185,14 @@ class TokopayDriver implements GatewayDriverInterface
                 'metode' => is_array($paymentCode) ? $paymentCode[0] : $paymentCode,
             ]);
 
-        if ($response->failed()) {
-            Log::error('Tokopay status check failed', [
-                'transaction_id' => $transaction->id,
-                'response' => $response->json(),
-                'status' => $response->status(),
-            ]);
-            $response->throw();
-        }
+        $this->throwIfFailed($response, 'Tokopay status check', $transaction->id);
 
         $data = $response->json();
         $result = $data['data'] ?? [];
         $status = $this->mapStatus($result['status'] ?? '');
-        $paidAt = null;
-        if ($status === 'PAID') {
-            // Check check status response has paid_at or updated_at, otherwise default to now
-            $paidAt = now();
-        }
+        $paidAt = $status === 'PAID'
+            ? $this->resolvePaidAt($result['updated_at'] ?? $result['paid_at'] ?? null)
+            : null;
 
         return new GatewayStatusResponse(
             pgRefId: $result['trx_id'] ?? null,

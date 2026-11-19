@@ -179,6 +179,11 @@ class WebhookController extends Controller
                     // Verify signature and map status
                     $statusResponse = $driver->handleWebhook($payload, $headers);
 
+                    // If driver requires an active status poll to determine final state (e.g. Ariepulsa)
+                    if ($driver->requiresStatusPollForWebhook()) {
+                        $statusResponse = $driver->checkStatus($transaction);
+                    }
+
                     $newPgStatus = $payload['transaction_status'] ?? $payload['status'] ?? $statusResponse->status;
 
                     // If status changes from PENDING, or pg_status changes, update and queue merchant callback

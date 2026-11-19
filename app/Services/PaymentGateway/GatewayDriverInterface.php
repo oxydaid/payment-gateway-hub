@@ -26,4 +26,10 @@ interface GatewayDriverInterface
      * Directly query the Payment Gateway to check the transaction status.
      */
     public function checkStatus(Transaction $transaction): GatewayStatusResponse;
+
+    /**
+     * Whether this driver requires a fresh status poll from the gateway
+     * to complete the webhook handling (e.g. Ariepulsa which sends no status in callback).
+     */
+    public function requiresStatusPollForWebhook(): bool;
 }

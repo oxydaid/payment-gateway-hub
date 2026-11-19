@@ -6,6 +6,7 @@ use App\Models\PaymentMethod;
 use App\Models\Transaction;
 use App\Models\WebhookLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
 uses(RefreshDatabase::class);
@@ -398,4 +399,61 @@ test('it creates a payment successfully using ariepulsa', function (): void {
     $response->assertJsonPath('data.fee', 7);
     $response->assertJsonPath('data.total_amount', 1007);
     $response->assertJsonPath('data.status', 'PENDING');
+});
+
+test('it creates a payment successfully using tokopay without sending customer_phone', function (): void {
+    $recordedPayload = null;
+    Http::fake([
+        'https://api.tokopay.id/v1/order' => function (Request $request) use (&$recordedPayload) {
+            $recordedPayload = $request->data();
+
+            return Http::response([
+                'status' => 'Success',
+                'data' => [
+                    'trx_id' => 'tokopay-12345',
+                    'pay_url' => 'https://api.tokopay.id/pay/12345',
+                    'qr_link' => 'https://api.tokopay.id/qr/12345.png',
+                ],
+            ], 200);
+        },
+    ]);
+
+    $merchant = Merchant::create([
+        'name' => 'Tokopay Merchant',
+        'api_key' => 'tokopay-test-key',
+        'is_active' => true,
+        'webhook_url' => 'https://merchant.com/webhook',
+    ]);
+
+    $gateway = PaymentGateway::create([
+        'name' => 'Tokopay',
+        'code' => 'tokopay',
+        'credentials' => [
+            'merchant_id' => 'M12345',
+            'secret_key' => 'secret99',
+        ],
+        'is_active' => true,
+    ]);
+
+    $method = PaymentMethod::create([
+        'payment_gateway_id' => $gateway->id,
+        'name' => 'QRIS Tokopay',
+        'code' => 'QRIS',
+        'type' => 'qris',
+        'fee_type' => 'fix',
+        'fee_fix' => 0,
+        'fee_percent' => 0,
+        'is_active' => true,
+    ]);
+
+    $response = $this->withToken('tokopay-test-key')->postJson(route('payments.store'), [
+        'merchant_ref_id' => 'INV-TOKO-001',
+        'payment_method_id' => $method->id,
+        'amount' => 50000,
+        'redirect_url' => 'https://merchant.example.com/finish',
+    ]);
+
+    $response->assertStatus(201);
+    expect($recordedPayload)->not->toBeNull();
+    expect($recordedPayload)->not->toHaveKey('customer_phone');
 });

@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace App\Services\PaymentGateway\Drivers;
 
 use App\Models\Transaction;
-use App\Services\PaymentGateway\GatewayDriverInterface;
+use App\Services\PaymentGateway\AbstractGatewayDriver;
 use App\Services\PaymentGateway\Responses\GatewayPaymentResponse;
 use App\Services\PaymentGateway\Responses\GatewayStatusResponse;
+use Exception;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-class AriepulsaDriver implements GatewayDriverInterface
+class AriepulsaDriver extends AbstractGatewayDriver
 {
     protected string $apiKey;
 
@@ -40,53 +41,37 @@ class AriepulsaDriver implements GatewayDriverInterface
         ];
     }
 
+    public function requiresStatusPollForWebhook(): bool
+    {
+        return true;
+    }
+
     public function createPayment(Transaction $transaction): GatewayPaymentResponse
     {
         $methodCode = strtolower($transaction->paymentMethod->code);
+        $url = $this->resolveEndpoint($methodCode);
+
+        $payload = [
+            'api_key' => $this->apiKey,
+            'action' => 'get-deposit',
+            'jumlah' => (int) $transaction->amount,
+            'type_fee' => $this->typeFee,
+        ];
 
         if ($methodCode === 'qrisrealtime') {
-            $url = 'https://ariepulsa.com/api/qrisrealtime';
-            $payload = [
-                'api_key' => $this->apiKey,
-                'action' => 'get-deposit',
-                'jumlah' => (int) $transaction->amount,
-                'reff_id' => $transaction->reference_id,
-                'kode_channel' => 'QRISREALTIME',
-                'type_fee' => $this->typeFee,
-            ];
+            $payload['reff_id'] = $transaction->reference_id;
+            $payload['kode_channel'] = 'QRISREALTIME';
         } elseif ($methodCode === 'qrisgo') {
-            $url = 'https://ariepulsa.com/api/qrisgo';
-            $payload = [
-                'api_key' => $this->apiKey,
-                'action' => 'get-deposit',
-                'jumlah' => (int) $transaction->amount,
-                'reff_id' => $transaction->reference_id,
-                'type_fee' => $this->typeFee,
-            ];
-        } else {
-            // Default: qris standard
-            $url = 'https://ariepulsa.com/api/qris';
-            $payload = [
-                'api_key' => $this->apiKey,
-                'action' => 'get-deposit',
-                'jumlah' => (int) $transaction->amount,
-                'type_fee' => $this->typeFee,
-            ];
+            $payload['reff_id'] = $transaction->reference_id;
         }
 
         $response = Http::asForm()
             ->timeout(10)
             ->connectTimeout(3)
+            ->retry(3, 100)
             ->post($url, $payload);
 
-        if ($response->failed()) {
-            Log::error('Ariepulsa payment creation failed', [
-                'transaction_id' => $transaction->id,
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-            throw new \Exception('Ariepulsa connection error.');
-        }
+        $this->throwIfFailed($response, 'Ariepulsa payment creation', $transaction->id);
 
         $data = $response->json();
 
@@ -95,10 +80,10 @@ class AriepulsaDriver implements GatewayDriverInterface
                 'transaction_id' => $transaction->id,
                 'response' => $data,
             ]);
-            throw new \Exception('Ariepulsa error: '.($data['data']['pesan'] ?? 'Unknown error'));
+            throw new Exception('Ariepulsa error: '.($data['data']['pesan'] ?? 'Unknown error'));
         }
 
-        $resData = $data['data'];
+        $resData = $data['data'] ?? [];
 
         return new GatewayPaymentResponse(
             pgRefId: $resData['kode_deposit'] ?? null,
@@ -116,47 +101,34 @@ class AriepulsaDriver implements GatewayDriverInterface
         $kodeDeposit = $resData['kode_deposit'] ?? null;
 
         if (empty($kodeDeposit)) {
-            throw new \Exception('Ariepulsa callback error: missing kode_deposit');
+            throw new Exception('Ariepulsa callback error: missing kode_deposit');
         }
 
-        // Find the transaction locally to determine the correct payment method (and thus the correct status check endpoint)
-        $transaction = Transaction::where('pg_ref_id', $kodeDeposit)->first();
-
-        if (! $transaction) {
-            throw new \Exception("Ariepulsa webhook verification failed: Transaction not found locally for pg_ref_id [{$kodeDeposit}].");
-        }
-
-        return $this->checkStatus($transaction);
+        // Return status PENDING; controller will immediately call checkStatus() with the resolved transaction
+        return new GatewayStatusResponse(
+            pgRefId: (string) $kodeDeposit,
+            status: 'PENDING',
+            paidAt: null,
+            rawResponse: $payload
+        );
     }
 
     public function checkStatus(Transaction $transaction): GatewayStatusResponse
     {
         $methodCode = strtolower($transaction->paymentMethod->code);
-
-        if ($methodCode === 'qrisrealtime') {
-            $url = 'https://ariepulsa.com/api/qrisrealtime';
-        } elseif ($methodCode === 'qrisgo') {
-            $url = 'https://ariepulsa.com/api/qrisgo';
-        } else {
-            $url = 'https://ariepulsa.com/api/qris';
-        }
+        $url = $this->resolveEndpoint($methodCode);
 
         $response = Http::asForm()
             ->timeout(10)
             ->connectTimeout(3)
+            ->retry(3, 100)
             ->post($url, [
                 'api_key' => $this->apiKey,
                 'action' => 'status-deposit',
                 'kode_deposit' => $transaction->pg_ref_id,
             ]);
 
-        if ($response->failed()) {
-            Log::error('Ariepulsa status check failed', [
-                'transaction_id' => $transaction->id,
-                'status' => $response->status(),
-            ]);
-            throw new \Exception('Ariepulsa connection error.');
-        }
+        $this->throwIfFailed($response, 'Ariepulsa status check', $transaction->id);
 
         $data = $response->json();
 
@@ -165,18 +137,27 @@ class AriepulsaDriver implements GatewayDriverInterface
                 'transaction_id' => $transaction->id,
                 'response' => $data,
             ]);
-            throw new \Exception('Ariepulsa error: '.($data['data']['pesan'] ?? 'Unknown error'));
+            throw new Exception('Ariepulsa error: '.($data['data']['pesan'] ?? 'Unknown error'));
         }
 
-        $resData = $data['data'];
+        $resData = $data['data'] ?? [];
         $mappedStatus = $this->mapStatus($resData['status'] ?? 'Pending');
 
         return new GatewayStatusResponse(
             pgRefId: $resData['kode_deposit'] ?? null,
             status: $mappedStatus,
-            paidAt: $mappedStatus === 'PAID' ? now()->toImmutable() : null,
+            paidAt: $mappedStatus === 'PAID' ? $this->resolvePaidAt(null) : null,
             rawResponse: $data
         );
+    }
+
+    protected function resolveEndpoint(string $methodCode): string
+    {
+        return match ($methodCode) {
+            'qrisrealtime' => 'https://ariepulsa.com/api/qrisrealtime',
+            'qrisgo' => 'https://ariepulsa.com/api/qrisgo',
+            default => 'https://ariepulsa.com/api/qris',
+        };
     }
 
     protected function mapStatus(string $status): string
